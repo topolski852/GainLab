@@ -325,12 +325,13 @@ function computeScore(
   mechType: MechanismType,
   isRampUp: boolean
 ): number {
-  // Oscillation is always bad regardless of mechanism — inconsistent output
+  // One zero-crossing after approach is normal underdamped settling — don't penalise.
+  // Two or more mean the loop is genuinely hunting.
   const oscPenalty =
-    oscillations === 0 ? 0 :
-    oscillations === 1 ? 4 :
-    oscillations === 2 ? 20 :
-    50 * (oscillations - 1)
+    oscillations <= 1 ? 0 :
+    oscillations === 2 ? 8 :
+    oscillations === 3 ? 25 :
+    60 * (oscillations - 2)
 
   const ssErrPct = Math.abs(setpoint) > 0 ? (ssError / Math.abs(setpoint)) * 100 : ssError
 

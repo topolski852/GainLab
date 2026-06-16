@@ -79,12 +79,13 @@ class GaussianProcess {
 
 // ─── Acquisition: Upper Confidence Bound ──────────────────────────────────────
 // UCB = mean + β·std  (maximize).
-// β decays from 2.5→0.3 over the first 50 UCB experiments, promoting
-// exploration early and exploitation later.
+// β decays from 1.8→0.3 over the first 50 UCB experiments. Starting at 1.8
+// (not 2.5) reduces the tendency to leap to high-uncertainty extreme gain
+// values that the structured phase already showed are poor.
 
 function getBeta(ucbCount: number): number {
   const decay = Math.pow(Math.max(0, 1 - ucbCount / 50), 0.5)
-  return Math.max(0.3, 2.5 * decay)
+  return Math.max(0.3, 1.8 * decay)
 }
 
 // Diversity: minimum euclidean distance to any observed normalized point
@@ -100,11 +101,19 @@ function minDistTo(v: number[], observed: number[][]): number {
 }
 
 // ─── Structured initial exploration ───────────────────────────────────────────
-// First STRUCTURED_COUNT experiments sweep kP across three decades so the
-// GP has meaningful observations spanning the whole gain space before UCB runs.
+// First STRUCTURED_COUNT experiments sweep kP so the GP has meaningful
+// observations spanning the gain space before UCB runs.
+//
+// Velocity control (flywheel): kV feedforward handles steady state, so kP<0.05
+// is practically useless — the motor barely responds differently. Starting at
+// 0.05 avoids tests that visually look broken (motor barely moves) and still
+// gives the GP a clear low-end reference.
+//
+// Position control: full range needed; kP=0.001 can matter on high-ratio arms.
 
 const STRUCTURED_COUNT = 7
-const STRUCTURED_KP    = [0.001, 0.01, 0.05, 0.2, 0.5, 1.5, 5.0]
+const FLYWHEEL_KP_SWEEP  = [0.05, 0.15, 0.4, 0.9, 1.8, 3.5, 5.0]
+const POSITION_KP_SWEEP  = [0.001, 0.01, 0.05, 0.2, 0.8, 3.0, 8.0]
 
 // ─── Gain space normalization ─────────────────────────────────────────────────
 
@@ -157,25 +166,35 @@ function randomVec(dim: number): number[] {
   return Array.from({ length: dim }, () => Math.random())
 }
 
+// Score cap: clamp extreme outlier scores before fitting the GP so that
+// a single catastrophically bad test (e.g. kP=0.05 giving score=7000) doesn't
+// warp the GP surface and push UCB into re-exploring clearly bad regions.
+const MAX_GP_SCORE = 150
+
 // ─── Bayesian Optimizer ───────────────────────────────────────────────────────
 
 export class BayesianOptimizer {
   private gp = new GaussianProcess()
   private history: OptimizerEntry[] = []
   private bounds: GainBounds
+  private mechType: MechanismType
   private dim = GAIN_KEYS.length
+  private kpSweep: number[]
 
-  constructor(bounds: GainBounds) {
-    this.bounds = bounds
+  constructor(bounds: GainBounds, mechType: MechanismType = 'flywheel') {
+    this.bounds   = bounds
+    this.mechType = mechType
+    this.kpSweep  = mechType === 'flywheel' ? FLYWHEEL_KP_SWEEP : POSITION_KP_SWEEP
   }
 
-  // quality = −score (higher = better), GP maximizes quality
+  // quality = −score (higher = better), GP maximizes quality.
+  // Scores are clamped before fitting so catastrophic outliers don't distort
+  // the GP surface and cause UCB to re-explore clearly bad gain regions.
   observe(entry: OptimizerEntry): void {
     this.history.push(entry)
-    // Fit GP only once we have enough structured observations to be meaningful
     if (this.history.length >= STRUCTURED_COUNT) {
       const X = this.history.map(e => normalize(e.gains, this.bounds))
-      const y = this.history.map(e => -e.metrics.score)
+      const y = this.history.map(e => -Math.min(e.metrics.score, MAX_GP_SCORE))
       this.gp.fit(X, y)
     }
   }
@@ -186,7 +205,7 @@ export class BayesianOptimizer {
     // ── Structured phase ──────────────────────────────────────────────────────
     if (n < STRUCTURED_COUNT) {
       const base: Gains = {
-        kP: STRUCTURED_KP[n],
+        kP: this.kpSweep[n],
         kI: 0,
         kD: 0,
         kS: 0.25,
@@ -195,7 +214,7 @@ export class BayesianOptimizer {
         kG: 0,
         ...fixedGains,
       }
-      base.kP = STRUCTURED_KP[n]   // fixedGains must not override the sweep kP
+      base.kP = this.kpSweep[n]   // fixedGains must not override the sweep kP
       return base
     }
 
@@ -207,7 +226,9 @@ export class BayesianOptimizer {
     let bestScore = -Infinity
     let bestVec   = randomVec(this.dim)
     const CANDIDATES = 512
-    let diverseMin   = 0.08
+    // Reduced diversity floor (0.05 vs 0.08) so UCB can stay near observed
+    // good regions rather than being forced into uncharted extreme territory.
+    let diverseMin   = 0.05
 
     // Sample candidates; relax diversity requirement if nothing diverse found
     while (diverseMin >= 0) {
@@ -230,7 +251,7 @@ export class BayesianOptimizer {
         for (const delta of [-0.05, 0.05]) {
           const v = [...bestVec]
           v[d] = Math.max(0, Math.min(1, v[d] + delta))
-          if (minDistTo(v, observed) < 0.04) continue   // soft diversity floor in hill-climb
+          if (minDistTo(v, observed) < 0.03) continue
           const { mean, std } = this.gp.predict(v)
           const s = mean + beta * std
           if (s > bestScore) { bestScore = s; bestVec = v; improved = true }
@@ -245,10 +266,11 @@ export class BayesianOptimizer {
   getPhaseInfo(): PhaseInfo {
     const n = this.history.length
     if (n < STRUCTURED_COUNT) {
+      const nextKP = this.kpSweep[n]?.toFixed(3) ?? '—'
       return {
         phase: 'structured',
         label: 'Structured Sweep',
-        description: `Systematic kP sweep  ${n} / ${STRUCTURED_COUNT}`,
+        description: `kP sweep  ${n} / ${STRUCTURED_COUNT}  (next kP = ${nextKP})`,
         progressPct: (n / STRUCTURED_COUNT) * 100
       }
     }

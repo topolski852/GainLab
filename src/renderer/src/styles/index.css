@@ -1087,6 +1087,117 @@ body::before {
   margin-left: 8px;
 }
 
+/* ── Auto-run ────────────────────────────────────────────────────────────────── */
+.auto-run-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auto-run-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.auto-run-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.auto-run-input {
+  width: 56px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-normal);
+  border-radius: var(--chamfer-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 4px 6px;
+  text-align: center;
+}
+
+.auto-run-input:focus {
+  outline: none;
+  border-color: var(--blue-bright);
+}
+
+.auto-run-unit {
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.btn-auto-run {
+  padding: 5px 12px;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid var(--blue-dim);
+  border-radius: var(--chamfer-sm);
+  color: var(--blue-bright);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-auto-run:hover:not(:disabled) {
+  background: var(--blue-glow);
+  border-color: var(--blue-bright);
+}
+
+.btn-auto-run:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.auto-run-active {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid var(--blue-dim);
+  border-radius: var(--chamfer-sm);
+}
+
+.auto-run-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--blue-bright);
+  font-family: var(--font-mono);
+}
+
+.auto-run-spinner {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border: 2px solid rgba(59, 130, 246, 0.3);
+  border-top-color: var(--blue-bright);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.btn-stop {
+  padding: 4px 10px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--chamfer-sm);
+  color: var(--error);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-stop:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
 /* ── Recharts overrides ───────────────────────────────────────────────────────── */
 .recharts-cartesian-axis-tick-value { fill: var(--text-muted); font-size: 11px; }
 .recharts-legend-item-text { color: var(--text-secondary) !important; font-size: 11px; }

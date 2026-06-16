@@ -41,9 +41,18 @@ export default function App(): JSX.Element {
   const liveStartTimeRef = useRef<number>(0)
   const liveTestActiveRef = useRef(false)
 
+  // Auto-run: continuously suggest→run without user pressing buttons.
+  const [autoRunning, setAutoRunning] = useState(false)
+  const [autoRunProgress, setAutoRunProgress] = useState({ done: 0, total: 0 })
+  const autoRunDoneRef  = useRef(0)
+  const autoRunTotalRef = useRef(0)
+  const autoRunActiveRef = useRef(false)
+  // Always points to the current runSim closure so auto-run doesn't go stale.
+  const runSimRef = useRef<() => void>(() => {})
+
   // Rebuild optimizer when mechanism config changes
   useEffect(() => {
-    optimizerRef.current = new BayesianOptimizer(defaultBounds(mechanism.type))
+    optimizerRef.current = new BayesianOptimizer(defaultBounds(mechanism.type), mechanism.type)
     setHistory([])
     setTestCount(0)
     setStepData([])
@@ -89,8 +98,25 @@ export default function App(): JSX.Element {
       }
 
       setIsRunning(false)
+
+      // Auto-run continuation: if an auto-run session is active, schedule the next test.
+      if (autoRunActiveRef.current) {
+        autoRunDoneRef.current += 1
+        const done  = autoRunDoneRef.current
+        const total = autoRunTotalRef.current
+        setAutoRunProgress({ done, total })
+        if (done < total) {
+          setTimeout(() => { if (autoRunActiveRef.current) runSimRef.current() }, 80)
+        } else {
+          autoRunActiveRef.current = false
+          setAutoRunning(false)
+        }
+      }
     }, 0)
   }, [mechanism, gains, setpointDisplay, isRunning, testCount])
+
+  // Keep runSimRef current so auto-run always calls the latest closure.
+  useEffect(() => { runSimRef.current = runSim }, [runSim])
 
   // ── Bayesian suggest ────────────────────────────────────────────────────────
 
@@ -102,6 +128,23 @@ export default function App(): JSX.Element {
     const suggested = optimizerRef.current.suggest(fixed)
     setGains(suggested)
   }, [mechanism])
+
+  // ── Auto-run ────────────────────────────────────────────────────────────────
+
+  const startAutoRun = useCallback((n: number) => {
+    if (isRunning || n < 1) return
+    autoRunDoneRef.current   = 0
+    autoRunTotalRef.current  = n
+    autoRunActiveRef.current = true
+    setAutoRunning(true)
+    setAutoRunProgress({ done: 0, total: n })
+    setTimeout(() => runSimRef.current(), 0)
+  }, [isRunning])
+
+  const stopAutoRun = useCallback(() => {
+    autoRunActiveRef.current = false
+    setAutoRunning(false)
+  }, [])
 
   // ── NT4 live mode ───────────────────────────────────────────────────────────
 
@@ -250,10 +293,14 @@ export default function App(): JSX.Element {
           isRunning={isRunning}
           phaseInfo={phaseInfo}
           history={history}
+          autoRunning={autoRunning}
+          autoRunProgress={autoRunProgress}
           onGainsChange={setGains}
           onRunTest={connectionMode === 'sim' ? runSim : startLiveTest}
           onSuggest={suggestGains}
           onExport={exportJava}
+          onStartAutoRun={startAutoRun}
+          onStopAutoRun={stopAutoRun}
         />
       </div>
 

@@ -12,10 +12,14 @@ interface Props {
   isRunning: boolean
   phaseInfo: PhaseInfo
   history: OptimizerEntry[]
+  autoRunning: boolean
+  autoRunProgress: { done: number; total: number }
   onGainsChange: (g: Gains) => void
   onRunTest: () => void
   onSuggest: () => void
   onExport: () => void
+  onStartAutoRun: (n: number) => void
+  onStopAutoRun: () => void
 }
 
 const GAIN_DEFS: { key: keyof Gains; label: string; unit: string; step: number; min: number }[] = [
@@ -123,10 +127,12 @@ function buildLog(history: OptimizerEntry[], mechanism: MechanismConfig, nominal
 
 export default function GainsPanel({
   gains, metrics, mechanism, nominalSetpoint, testCount, isRunning,
-  phaseInfo, history, onGainsChange, onRunTest, onSuggest, onExport
+  phaseInfo, history, autoRunning, autoRunProgress,
+  onGainsChange, onRunTest, onSuggest, onExport, onStartAutoRun, onStopAutoRun
 }: Props): JSX.Element {
 
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle')
+  const [autoRunCount, setAutoRunCount] = useState(20)
 
   const showKG = mechanism.type === 'arm' || mechanism.type === 'elevator'
   const visibleGains = GAIN_DEFS.filter(g => g.key !== 'kG' || showKG)
@@ -227,7 +233,7 @@ export default function GainsPanel({
         <button
           className={`btn btn-primary ${isRunning ? 'loading' : ''}`}
           onClick={onRunTest}
-          disabled={isRunning}
+          disabled={isRunning || autoRunning}
         >
           {isRunning ? <><span className="spinner" /> Running…</> : <>▶ Run Test</>}
         </button>
@@ -235,7 +241,7 @@ export default function GainsPanel({
         <button
           className="btn btn-secondary"
           onClick={onSuggest}
-          disabled={isRunning}
+          disabled={isRunning || autoRunning}
           title={isStructured
             ? `Suggest next structured kP sweep (${phaseInfo.description})`
             : 'Suggest gains via Bayesian UCB optimizer'}
@@ -251,6 +257,42 @@ export default function GainsPanel({
           ↗ Export Java
         </button>
       </div>
+
+      {/* Auto-run */}
+      <div className="section-divider" />
+      {autoRunning ? (
+        <div className="auto-run-active">
+          <div className="auto-run-status">
+            <span className="auto-run-spinner" />
+            <span>Experiment {autoRunProgress.done + 1} of {autoRunProgress.total}</span>
+          </div>
+          <button className="btn btn-stop" onClick={onStopAutoRun}>■ Stop</button>
+        </div>
+      ) : (
+        <div className="auto-run-controls">
+          <label className="auto-run-label">Auto-Optimize</label>
+          <div className="auto-run-row">
+            <input
+              type="number"
+              className="auto-run-input"
+              value={autoRunCount}
+              min={1}
+              max={200}
+              onChange={e => setAutoRunCount(Math.max(1, parseInt(e.target.value) || 1))}
+              title="Number of experiments to run automatically"
+            />
+            <span className="auto-run-unit">experiments</span>
+            <button
+              className="btn btn-auto-run"
+              onClick={() => onStartAutoRun(autoRunCount)}
+              disabled={isRunning}
+              title={`Run ${autoRunCount} experiments automatically`}
+            >
+              ▶▶ Run
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* History */}
       {history.length > 0 && (
