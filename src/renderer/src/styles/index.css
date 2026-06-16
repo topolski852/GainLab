@@ -387,6 +387,17 @@ body::before {
   letter-spacing: 0.02em;
 }
 
+.motor-trap-warning {
+  margin-top: 6px;
+  padding: 6px 8px;
+  font-size: 9px;
+  line-height: 1.5;
+  color: var(--gold-bright);
+  background: rgba(240,180,41,0.07);
+  border: 1px solid rgba(240,180,41,0.25);
+  border-radius: var(--chamfer-sm);
+}
+
 /* ── Step Graph ───────────────────────────────────────────────────────────────── */
 .step-graph-panel {
   display: flex;

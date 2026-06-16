@@ -48,6 +48,7 @@ export default function MechanismPanel({
   }
 
   const selectedMotor = MOTORS[mechanism.motorType]
+  const showTrapWarning = mechanism.type === 'flywheel' && selectedMotor?.commutation === 'trapezoidal'
 
   return (
     <div className="mechanism-panel">
@@ -130,6 +131,13 @@ export default function MechanismPanel({
               ⚠ Some Minion specs are derived, not from published dyno data.
             </div>
           )}
+        </div>
+      )}
+
+      {showTrapWarning && (
+        <div className="motor-trap-warning">
+          ⚠ Trapezoidal commutation causes speed ripple at high RPM.
+          For shooters, use the FOC variant for consistent shot energy.
         </div>
       )}
 

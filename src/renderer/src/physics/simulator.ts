@@ -166,7 +166,7 @@ function runStep(
   // motor model and not referenced explicitly here.
   void freeSpeedRadps
 
-  const metrics = calculateMetrics(points, setpointDisplay)
+  const metrics = calculateMetrics(points, setpointDisplay, cfg.type)
   return {
     points,
     finalPhysics: { omega_mech, theta_mech, v_elev, y_elev },
@@ -214,7 +214,7 @@ export function runMultiStepSimulation(
     points:           allPoints,
     segmentBoundaries: segBoundaries,
     segmentMetrics:   segMetrics,
-    aggregateMetrics: aggregateMetrics(segMetrics)
+    aggregateMetrics: aggregateMetrics(segMetrics, steps, cfg.type)
   }
 }
 
@@ -234,18 +234,39 @@ export function runSimulation(
 
 // ─── Metrics ──────────────────────────────────────────────────────────────────
 
-function calculateMetrics(points: StepResponsePoint[], setpoint: number): StepMetrics {
+function calculateMetrics(
+  points: StepResponsePoint[],
+  setpoint: number,
+  mechType: MechanismType
+): StepMetrics {
   if (points.length === 0 || setpoint === 0) {
     return { riseTimeS: -1, overshootPct: 0, settlingTimeS: -1, steadyStateError: 0, oscillations: 0, score: 999 }
   }
 
-  const band = 0.02 * Math.abs(setpoint)
-  let rise10 = -1, rise90 = -1, maxActual = -Infinity, settlingTime = -1
+  const startActual = points[0].actual
+  const isRampUp    = setpoint >= startActual  // false when setpoint is below current position
+
+  // 10% and 90% thresholds relative to where we started, not from zero
+  const delta      = setpoint - startActual
+  const thresh10   = startActual + 0.1 * delta
+  const thresh90   = startActual + 0.9 * delta
+  const band       = 0.02 * Math.abs(setpoint)
+
+  let rise10 = -1, rise90 = -1
+  let maxActual = -Infinity, minActual = Infinity
+  let settlingTime = -1
 
   for (const pt of points) {
     if (pt.actual > maxActual) maxActual = pt.actual
-    if (rise10 < 0 && pt.actual >= 0.1 * setpoint) rise10 = pt.time
-    if (rise90 < 0 && pt.actual >= 0.9 * setpoint) rise90 = pt.time
+    if (pt.actual < minActual) minActual = pt.actual
+
+    if (isRampUp) {
+      if (rise10 < 0 && pt.actual >= thresh10) rise10 = pt.time
+      if (rise90 < 0 && pt.actual >= thresh90) rise90 = pt.time
+    } else {
+      if (rise10 < 0 && pt.actual <= thresh10) rise10 = pt.time
+      if (rise90 < 0 && pt.actual <= thresh90) rise90 = pt.time
+    }
   }
 
   for (let i = points.length - 1; i >= 0; i--) {
@@ -256,14 +277,19 @@ function calculateMetrics(points: StepResponsePoint[], setpoint: number): StepMe
   }
   if (settlingTime < 0) settlingTime = 0
 
-  const riseTimeS    = rise90 >= 0 && rise10 >= 0 ? rise90 - rise10 : -1
-  const overshootPct = setpoint > 0 ? Math.max(0, (maxActual - setpoint) / Math.abs(setpoint) * 100) : 0
+  const riseTimeS = rise90 >= 0 && rise10 >= 0 ? rise90 - rise10 : -1
+
+  // Direction-aware overshoot: how far did we blow past the setpoint?
+  const overshootPct = isRampUp
+    ? Math.max(0, (maxActual - setpoint) / Math.abs(setpoint) * 100)  // went above target
+    : Math.max(0, (setpoint - minActual) / Math.abs(setpoint) * 100)  // went below target
+
   const oscillations = countOscillations(points, setpoint)
 
-  const lastN    = Math.max(1, Math.floor(points.length * 0.2))
-  const ssError  = points.slice(-lastN).reduce((s, p) => s + Math.abs(p.setpoint - p.actual), 0) / lastN
+  const lastN   = Math.max(1, Math.floor(points.length * 0.2))
+  const ssError = points.slice(-lastN).reduce((s, p) => s + Math.abs(p.setpoint - p.actual), 0) / lastN
 
-  const score = computeScore(riseTimeS, overshootPct, settlingTime, ssError, setpoint, oscillations)
+  const score = computeScore(riseTimeS, overshootPct, settlingTime, ssError, setpoint, oscillations, mechType, isRampUp)
 
   return { riseTimeS, overshootPct, settlingTimeS: settlingTime, steadyStateError: ssError, oscillations, score }
 }
@@ -295,44 +321,82 @@ function computeScore(
   settlingTimeS: number,
   ssError: number,
   setpoint: number,
-  oscillations: number
+  oscillations: number,
+  mechType: MechanismType,
+  isRampUp: boolean
 ): number {
-  // Oscillation: exponential penalty — 2 crossings is very bad, 3+ is disqualifying
+  // Oscillation is always bad regardless of mechanism — inconsistent output
   const oscPenalty =
     oscillations === 0 ? 0 :
     oscillations === 1 ? 4 :
     oscillations === 2 ? 20 :
     50 * (oscillations - 1)
 
-  // Overshoot: gentle below 5%, increasingly painful above
+  const ssErrPct = Math.abs(setpoint) > 0 ? (ssError / Math.abs(setpoint)) * 100 : ssError
+
+  if (mechType === 'flywheel') {
+    if (isRampUp) {
+      // Ramp-up: getting to speed fast is everything. Overshoot is fine up to ~15%.
+      // Not reaching speed (riseTimeS = -1) is the worst possible outcome.
+      const rtPenalty = riseTimeS < 0 ? 90 : riseTimeS * 35
+      const ovPenalty =
+        overshootPct < 5  ? 0 :                              // free — aggressive is good
+        overshootPct < 15 ? (overshootPct - 5) * 0.4 :      // minor cost
+        4 + (overshootPct - 15) * 2.5                        // too aggressive
+      const stPenalty = settlingTimeS < 0 ? 5 : settlingTimeS * 4
+      const ssPenalty = ssErrPct * 2.5   // must actually hold the speed
+      return oscPenalty + ovPenalty + rtPenalty + stPenalty + ssPenalty
+    } else {
+      // Ramp-down: we care that oscillation doesn't happen and speed stabilizes,
+      // but fall time and how far it dips below are low stakes.
+      const rtPenalty = riseTimeS < 0 ? 3 : riseTimeS * 2
+      const ovPenalty = overshootPct * 0.3   // dipping below idle speed is mild
+      const stPenalty = settlingTimeS < 0 ? 2 : settlingTimeS * 2
+      const ssPenalty = ssErrPct * 0.8
+      return oscPenalty + ovPenalty + rtPenalty + stPenalty + ssPenalty
+    }
+  }
+
+  // ── Position control (arm / elevator) ────────────────────────────────────────
+  // Both directions matter equally. Overshoot is more dangerous (physical stops).
+  // Settling time weighted highest.
   const ovPenalty =
-    overshootPct < 5  ? overshootPct * 0.3 :
-    overshootPct < 15 ? 1.5 + (overshootPct - 5) * 2.0 :
-    21.5 + (overshootPct - 15) * 4.0
-
-  // Rise time: penalise slow response (never reached = worst)
-  const rtPenalty  = riseTimeS  < 0 ? 60 : riseTimeS  * 25
-
-  // Settling time
-  const stPenalty  = settlingTimeS < 0 ? 40 : settlingTimeS * 12
-
-  // SS error as % of setpoint
-  const ssErrPct   = Math.abs(setpoint) > 0 ? (ssError / Math.abs(setpoint)) * 100 : ssError
-  const ssPenalty  = ssErrPct * 1.5
-
+    overshootPct < 3  ? overshootPct * 0.2 :
+    overshootPct < 10 ? 0.6 + (overshootPct - 3) * 2.5 :
+    18.1 + (overshootPct - 10) * 5.0
+  const rtPenalty  = riseTimeS < 0 ? 60 : riseTimeS * 20
+  const stPenalty  = settlingTimeS < 0 ? 40 : settlingTimeS * 15
+  const ssPenalty  = ssErrPct * 2.5
   return oscPenalty + ovPenalty + rtPenalty + stPenalty + ssPenalty
 }
 
-function aggregateMetrics(segs: StepMetrics[]): StepMetrics {
+function aggregateMetrics(segs: StepMetrics[], steps: TestStep[], mechType: MechanismType): StepMetrics {
   if (segs.length === 0) return { riseTimeS: -1, overshootPct: 0, settlingTimeS: -1, steadyStateError: 0, oscillations: 0, score: 999 }
-  const avg = (fn: (m: StepMetrics) => number) => segs.reduce((s, m) => s + fn(m), 0) / segs.length
+
+  // For flywheel, ramp-up segments get 3× weight — getting to speed is the primary objective.
+  // The first step (from idle) is always a ramp-up and gets full weight.
+  const weights = segs.map((_, i) => {
+    if (mechType !== 'flywheel') return 1
+    if (i === 0) return 3
+    return steps[i].setpointDisplay > steps[i - 1].setpointDisplay ? 3 : 1
+  })
+  const totalW = weights.reduce((s, w) => s + w, 0)
+  const wavg = (fn: (m: StepMetrics) => number) =>
+    segs.reduce((s, m, i) => s + fn(m) * weights[i], 0) / totalW
+
+  // riseTimeS display: show the weighted average, but exclude failed (-1) entries
+  const validRise = segs.filter((m, i) => m.riseTimeS >= 0).map((m, i) => ({ v: m.riseTimeS, w: weights[segs.indexOf(m)] }))
+  const riseTimeS = validRise.length > 0
+    ? validRise.reduce((s, x) => s + x.v * x.w, 0) / validRise.reduce((s, x) => s + x.w, 0)
+    : -1
+
   return {
-    riseTimeS:        avg(m => m.riseTimeS),
-    overshootPct:     avg(m => m.overshootPct),
-    settlingTimeS:    avg(m => m.settlingTimeS),
-    steadyStateError: avg(m => m.steadyStateError),
+    riseTimeS,
+    overshootPct:     wavg(m => m.overshootPct),
+    settlingTimeS:    wavg(m => m.settlingTimeS),
+    steadyStateError: wavg(m => m.steadyStateError),
     oscillations:     segs.reduce((s, m) => s + m.oscillations, 0),
-    score:            avg(m => m.score),   // avg score across segments
+    score:            wavg(m => m.score),
   }
 }
 
