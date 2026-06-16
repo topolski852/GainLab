@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { MechanismConfig, Gains, AppState, StepResponsePoint, OptimizerEntry, ConnectionStatus } from './types'
-import { runSimulation, calculateBaselineGains, displayUnitLabel, defaultSetpoint } from './physics/simulator'
+import { MechanismConfig, Gains, AppState, StepResponsePoint, OptimizerEntry, ConnectionStatus, PhaseInfo } from './types'
+import { runMultiStepSimulation, runSimulation, calculateBaselineGains, displayUnitLabel, defaultSetpoint, getTestSequence } from './physics/simulator'
 import { BayesianOptimizer, defaultBounds } from './optimizer/bayesian'
 import { NT4Client, nt4URL } from './nt4/client'
 import MechanismPanel from './components/MechanismPanel'
@@ -26,6 +26,7 @@ export default function App(): JSX.Element {
   const [gains, setGains] = useState<Gains>(() => calculateBaselineGains(DEFAULT_MECHANISM))
   const [setpointDisplay, setSetpointDisplay] = useState<number>(defaultSetpoint(DEFAULT_MECHANISM))
   const [stepData, setStepData] = useState<StepResponsePoint[]>([])
+  const [segmentBoundaries, setSegmentBoundaries] = useState<number[]>([])
   const [metrics, setMetrics] = useState<AppState['metrics']>(null)
   const [history, setHistory] = useState<OptimizerEntry[]>([])
   const [testCount, setTestCount] = useState(0)
@@ -40,13 +41,14 @@ export default function App(): JSX.Element {
   const liveStartTimeRef = useRef<number>(0)
   const liveTestActiveRef = useRef(false)
 
-  // Rebuild optimizer when mechanism type changes (gain bounds differ)
+  // Rebuild optimizer when mechanism config changes
   useEffect(() => {
     const hasGravity = mechanism.type === 'arm' || mechanism.type === 'elevator'
     optimizerRef.current = new BayesianOptimizer(defaultBounds(hasGravity))
     setHistory([])
     setTestCount(0)
     setStepData([])
+    setSegmentBoundaries([])
     setMetrics(null)
     const newGains = calculateBaselineGains(mechanism)
     setGains(newGains)
@@ -60,16 +62,19 @@ export default function App(): JSX.Element {
     if (isRunning) return
     setIsRunning(true)
 
-    // Run synchronously (fast enough for 2s @ 20ms record rate)
     setTimeout(() => {
-      const { points, metrics: m } = runSimulation(mechanism, gains, setpointDisplay)
-      setStepData(points)
-      setMetrics(m)
+      const steps  = getTestSequence(mechanism.type, setpointDisplay, testCount)
+      const result = runMultiStepSimulation(mechanism, gains, steps)
+
+      setStepData(result.points)
+      setSegmentBoundaries(result.segmentBoundaries)
+      setMetrics(result.aggregateMetrics)
 
       const entry: OptimizerEntry = {
-        gains: { ...gains },
-        metrics: m,
-        testIndex: testCount
+        gains:    { ...gains },
+        metrics:  result.aggregateMetrics,
+        testIndex: testCount,
+        steps,
       }
       setHistory(prev => [...prev, entry])
       setTestCount(prev => prev + 1)
@@ -83,8 +88,8 @@ export default function App(): JSX.Element {
   const suggestGains = useCallback(() => {
     if (!optimizerRef.current) return
     const baseline = calculateBaselineGains(mechanism)
-    // Fix kV and kG from physics — let optimizer tune kP, kI, kD, kS, kA
-    const fixed: Partial<Gains> = { kV: baseline.kV, kG: baseline.kG }
+    // Pin physics-derived feedforward gains; let optimizer tune kP, kI, kD, kS
+    const fixed: Partial<Gains> = { kV: baseline.kV, kG: baseline.kG, kA: baseline.kA }
     const suggested = optimizerRef.current.suggest(fixed)
     setGains(suggested)
   }, [mechanism])
@@ -96,25 +101,22 @@ export default function App(): JSX.Element {
       nt4Ref.current.disconnect()
     }
 
-    const url = nt4URL(teamNumber)
+    const url    = nt4URL(teamNumber)
     const prefix = '/gainlab'
 
     const client = new NT4Client(
       url,
-      (topic, timestampUs, value) => {
+      (topic, _timestampUs, value) => {
         if (!liveTestActiveRef.current) return
         if (topic === `${prefix}/actual` && typeof value === 'number') {
           const elapsed = (performance.now() - liveStartTimeRef.current) / 1000
           liveBufferRef.current.push({
-            time: parseFloat(elapsed.toFixed(3)),
+            time:     parseFloat(elapsed.toFixed(3)),
             setpoint: setpointDisplay,
-            actual: parseFloat((value as number).toFixed(4))
+            actual:   parseFloat((value as number).toFixed(4))
           })
           setStepData([...liveBufferRef.current])
-
-          if (elapsed >= 2.0) {
-            endLiveTest()
-          }
+          if (elapsed >= 2.0) endLiveTest()
         }
       },
       (status) => setConnectionStatus(status)
@@ -142,6 +144,7 @@ export default function App(): JSX.Element {
     liveTestActiveRef.current = true
     setIsRunning(true)
     setStepData([])
+    setSegmentBoundaries([])
 
     const prefix = '/gainlab'
     nt4Ref.current.publishValue(`${prefix}/setpoint`, setpointDisplay)
@@ -154,14 +157,15 @@ export default function App(): JSX.Element {
 
     const pts = liveBufferRef.current
     if (pts.length > 0) {
-      // Score the live step response using the same sim metrics calculator.
-      // runSimulation with duration=0 skips physics and returns baseline metrics;
-      // we re-use only the StepMetrics shape from a 0-duration sim as a placeholder
-      // until a dedicated live-data metrics path is added.
       const { metrics: m } = runSimulation(mechanism, gains, setpointDisplay, 0)
       setMetrics(m)
 
-      const entry: OptimizerEntry = { gains: { ...gains }, metrics: m, testIndex: testCount }
+      const entry: OptimizerEntry = {
+        gains:     { ...gains },
+        metrics:   m,
+        testIndex: testCount,
+        steps:     [{ setpointDisplay, durationS: 2.0 }],
+      }
       setHistory(prev => [...prev, entry])
       setTestCount(prev => prev + 1)
       optimizerRef.current?.observe(entry)
@@ -197,6 +201,12 @@ export default function App(): JSX.Element {
   }, [gains, mechanism, testCount])
 
   const unitLabel = displayUnitLabel(mechanism)
+  const phaseInfo: PhaseInfo = optimizerRef.current?.getPhaseInfo() ?? {
+    phase: 'structured',
+    label: 'Structured Sweep',
+    description: 'Initializing…',
+    progressPct: 0
+  }
 
   return (
     <div className="app-layout">
@@ -213,6 +223,7 @@ export default function App(): JSX.Element {
       <div className="panel panel-center">
         <StepGraph
           data={stepData}
+          segmentBoundaries={segmentBoundaries}
           unitLabel={unitLabel}
           mechanismType={mechanism.type}
           metrics={metrics}
@@ -226,12 +237,12 @@ export default function App(): JSX.Element {
           mechanismType={mechanism.type}
           testCount={testCount}
           isRunning={isRunning}
-          canSuggest={testCount >= 2}
+          phaseInfo={phaseInfo}
+          history={history}
           onGainsChange={setGains}
           onRunTest={connectionMode === 'sim' ? runSim : startLiveTest}
           onSuggest={suggestGains}
           onExport={exportJava}
-          history={history}
         />
       </div>
 

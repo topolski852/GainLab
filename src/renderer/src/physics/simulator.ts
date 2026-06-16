@@ -1,235 +1,246 @@
-import { MechanismConfig, Gains, StepResponsePoint, StepMetrics } from '../types'
+import { MechanismConfig, Gains, StepResponsePoint, StepMetrics, TestStep, MechanismType } from '../types'
 import { MOTORS, motorKvCTRE } from './motors'
 
-const PHYSICS_DT = 0.005   // 5 ms physics integration step
-const PID_DT = 0.020       // 20 ms PID update (matches Phoenix 6 control loop)
-const SUPPLY_VOLTAGE = 12.0
-const GRAVITY = 9.81
+const PHYSICS_DT = 0.005
+const PID_DT     = 0.020
+const SUPPLY_V   = 12.0
+const GRAVITY    = 9.81
 
-// ─── Unit conversion helpers ──────────────────────────────────────────────────
-// All simulation state is SI (rad/s, rad, m/s, m).
-// CTRE Phoenix 6 uses rotor-referred units: RPS for velocity, rotations for position.
-// Gains are expressed in CTRE units so they transfer directly to robot code.
+// ─── Unit conversions ─────────────────────────────────────────────────────────
+// Simulation state is always SI (rad/s, rad, m/s, m).
+// Gains live in CTRE Phoenix 6 rotor units (RPS, rotations).
+// Display units are natural (RPM, deg, m) for readability.
 
-function siToDisplayUnits(siVal: number, config: MechanismConfig): number {
-  if (config.type === 'flywheel') return siVal * config.gearRatio * 60 / (2 * Math.PI) // rad/s mech → rotor RPM
-  if (config.type === 'arm') return siVal * 180 / Math.PI                                // rad → degrees
-  return siVal                                                                             // elevator: meters
+function displayToSI(v: number, cfg: MechanismConfig): number {
+  if (cfg.type === 'flywheel') return v * 2 * Math.PI / (60 * cfg.gearRatio)  // RPM → mech rad/s
+  if (cfg.type === 'arm')      return v * Math.PI / 180                         // deg → rad
+  return v                                                                       // elevator: m
 }
 
-function displayToSI(displayVal: number, config: MechanismConfig): number {
-  if (config.type === 'flywheel') return displayVal * 2 * Math.PI / (60 * config.gearRatio)
-  if (config.type === 'arm') return displayVal * Math.PI / 180
-  return displayVal
+function siToDisplay(v: number, cfg: MechanismConfig): number {
+  if (cfg.type === 'flywheel') return v * cfg.gearRatio * 60 / (2 * Math.PI)  // mech rad/s → RPM
+  if (cfg.type === 'arm')      return v * 180 / Math.PI                         // rad → deg
+  return v
 }
 
-// CTRE rotor units ↔ SI mechanism units
-function ctreToSI(ctreVal: number, config: MechanismConfig): number {
-  if (config.type === 'flywheel') return ctreVal * 2 * Math.PI / config.gearRatio  // rotor RPS → mech rad/s
-  if (config.type === 'arm') return ctreVal * 2 * Math.PI / config.gearRatio       // rotor rot → mech rad
-  return ctreVal * 2 * Math.PI * config.spoolRadiusM / config.gearRatio            // rotor rot → m
+function siToCTRE(v: number, cfg: MechanismConfig): number {
+  if (cfg.type === 'flywheel') return v * cfg.gearRatio / (2 * Math.PI)
+  if (cfg.type === 'arm')      return v * cfg.gearRatio / (2 * Math.PI)
+  return v * cfg.gearRatio / (2 * Math.PI * cfg.spoolRadiusM)
 }
 
-function siToCTRE(siVal: number, config: MechanismConfig): number {
-  if (config.type === 'flywheel') return siVal * config.gearRatio / (2 * Math.PI)
-  if (config.type === 'arm') return siVal * config.gearRatio / (2 * Math.PI)
-  return siVal * config.gearRatio / (2 * Math.PI * config.spoolRadiusM)
+function displayToCTRE(v: number, cfg: MechanismConfig): number {
+  return siToCTRE(displayToSI(v, cfg), cfg)
 }
 
-// ─── Baseline gain calculator ─────────────────────────────────────────────────
+// ─── Physics state ────────────────────────────────────────────────────────────
 
-export function calculateBaselineGains(config: MechanismConfig): Gains {
-  const motor = MOTORS[config.motorType]
-  const kV = motorKvCTRE(motor)  // V·s/rot at rotor
+interface PhysicsState {
+  omega_mech: number   // rad/s at mechanism (flywheel velocity; arm/elevator angular rate)
+  theta_mech: number   // rad (arm position; unused for flywheel)
+  v_elev:     number   // m/s (elevator only)
+  y_elev:     number   // m   (elevator only)
+}
 
-  // kA: voltage needed per RPS/s of rotor acceleration
-  // Derived from τ = J·α, reflected to rotor, then V = τ·R / (Kt·N²)
-  let J_mech: number
-  if (config.type === 'flywheel') {
-    J_mech = 0.5 * config.massKg * config.radiusM * config.radiusM
-  } else if (config.type === 'arm') {
-    J_mech = (1 / 3) * config.massKg * config.lengthM * config.lengthM
-  } else {
-    J_mech = config.massKg * config.spoolRadiusM * config.spoolRadiusM
-  }
-  const J_motor_reflected = config.numMotors * motor.rotorInertiaKgM2 * config.gearRatio ** 2
-  const J_total = J_mech + J_motor_reflected
-  // V per (RPS/s at rotor): V = (J_total / (N²)) * alpha_rotor * R / (Kt * numMotors)
-  // alpha_rotor [rad/s²] = alpha_rps * 2π
-  const kA = J_total * motor.resistanceOhms * 2 * Math.PI /
-    (motor.KtNmPerAmp * config.numMotors * config.gearRatio ** 2)
-
-  let kG = 0
-  if (config.type === 'arm') {
-    // Voltage to hold arm horizontal: τ_grav = m·g·(L/2); V = τ_grav·R / (Kt·N·gearRatio)
-    kG = config.massKg * GRAVITY * (config.lengthM / 2) * motor.resistanceOhms /
-      (motor.KtNmPerAmp * config.numMotors * config.gearRatio)
-  } else if (config.type === 'elevator') {
-    const forceGrav = config.massKg * GRAVITY
-    kG = forceGrav * config.spoolRadiusM * motor.resistanceOhms /
-      (motor.KtNmPerAmp * config.numMotors * config.gearRatio)
-  }
-
+function defaultPhysicsState(cfg: MechanismConfig): PhysicsState {
   return {
-    kP: config.type === 'flywheel' ? 0.05 : 1.0,
-    kI: 0,
-    kD: 0,
-    kS: 0.25,
-    kV: parseFloat(kV.toFixed(4)),
-    kA: parseFloat(kA.toFixed(4)),
-    kG: parseFloat(kG.toFixed(4))
+    omega_mech: 0,
+    theta_mech: cfg.type === 'arm' ? cfg.startAngleDeg * Math.PI / 180 : 0,
+    v_elev:     0,
+    y_elev:     cfg.type === 'elevator' ? cfg.startHeightM : 0,
   }
 }
 
-// ─── Core simulation ──────────────────────────────────────────────────────────
+// ─── Effective inertia at mechanism output ────────────────────────────────────
 
-export function runSimulation(
-  config: MechanismConfig,
+function effectiveInertia(cfg: MechanismConfig): number {
+  const motor = MOTORS[cfg.motorType]
+  const J_motor = cfg.numMotors * motor.rotorInertiaKgM2 * cfg.gearRatio ** 2
+
+  if (cfg.type === 'flywheel') {
+    return 0.5 * cfg.massKg * cfg.radiusM ** 2 + J_motor
+  }
+  if (cfg.type === 'arm') {
+    return (1 / 3) * cfg.massKg * cfg.lengthM ** 2 + J_motor
+  }
+  // elevator: linear (kg), motor inertia reflected through spool
+  return cfg.massKg + J_motor / cfg.spoolRadiusM ** 2
+}
+
+// ─── Single-step simulation ───────────────────────────────────────────────────
+
+function runStep(
+  cfg: MechanismConfig,
   gains: Gains,
   setpointDisplay: number,
-  durationS = 2.0
-): { points: StepResponsePoint[]; metrics: StepMetrics } {
-  const motor = MOTORS[config.motorType]
-  const setpointSI = displayToSI(setpointDisplay, config)
-  const setpointCTRE = siToCTRE(setpointSI, config)
-
-  // Effective inertia at mechanism output (kg·m² for rotation, kg for linear)
-  let J_eff: number
-  const J_motor_reflected = config.numMotors * motor.rotorInertiaKgM2 * config.gearRatio ** 2
-
-  if (config.type === 'flywheel') {
-    J_eff = 0.5 * config.massKg * config.radiusM ** 2 + J_motor_reflected
-  } else if (config.type === 'arm') {
-    J_eff = (1 / 3) * config.massKg * config.lengthM ** 2 + J_motor_reflected
-  } else {
-    // Linear: effective mass (kg), motor inertia reflected through spool
-    J_eff = config.massKg + J_motor_reflected / config.spoolRadiusM ** 2
-  }
-
-  // SI state
-  let omega_mech = 0   // rad/s (flywheel: mech velocity; arm: angular velocity)
-  let theta_mech = config.type === 'arm'
-    ? (config.startAngleDeg * Math.PI / 180)
-    : 0                // rad (arm position)
-  let v_elev = 0       // m/s
-  let y_elev = config.type === 'elevator' ? config.startHeightM : 0  // m
-
-  // PID state
-  let integral = 0
-  let prevError = 0
-  let pidTimer = 0
-  let voltage = 0      // last PID output (voltage)
-
-  const points: StepResponsePoint[] = []
+  durationS: number,
+  initPhysics: PhysicsState,
+  timeOffset: number
+): { points: StepResponsePoint[]; finalPhysics: PhysicsState; metrics: StepMetrics } {
+  const motor  = MOTORS[cfg.motorType]
+  const J_eff  = effectiveInertia(cfg)
+  const setpointCTRE = displayToCTRE(setpointDisplay, cfg)
   const freeSpeedRadps = motor.freeSpeedRPM * 2 * Math.PI / 60
 
-  // Record every 20ms to keep data volume manageable
-  const recordEvery = Math.round(PID_DT / PHYSICS_DT)
-  let stepCount = 0
+  let { omega_mech, theta_mech, v_elev, y_elev } = initPhysics
+
+  let integral  = 0
+  let prevError = 0
+  let pidTimer  = 0
+  let voltage   = 0
+
+  const points: StepResponsePoint[] = []
+  const RECORD_EVERY = Math.round(PID_DT / PHYSICS_DT)
+  let step = 0
 
   for (let t = 0; t <= durationS + PHYSICS_DT * 0.5; t += PHYSICS_DT) {
-    // ── PID update (20 ms) ─────────────────────────────────────────────────
+    // PID update (20 ms)
     if (pidTimer >= PID_DT - PHYSICS_DT * 0.5) {
-      let actualCTRE: number
-      if (config.type === 'flywheel') {
-        actualCTRE = siToCTRE(omega_mech, config)
-      } else if (config.type === 'arm') {
-        actualCTRE = siToCTRE(theta_mech, config)
-      } else {
-        actualCTRE = siToCTRE(y_elev, config)
-      }
+      const actualCTRE = cfg.type === 'flywheel'
+        ? siToCTRE(omega_mech, cfg)
+        : cfg.type === 'arm'
+          ? siToCTRE(theta_mech, cfg)
+          : siToCTRE(y_elev, cfg)
 
-      const error = setpointCTRE - actualCTRE
-      integral += error * PID_DT
-      integral = Math.max(-50, Math.min(50, integral))   // anti-windup
-      const derivative = (error - prevError) / PID_DT
-      prevError = error
+      const error  = setpointCTRE - actualCTRE
+      integral    += error * PID_DT
+      integral     = Math.max(-50, Math.min(50, integral))
+      const deriv  = (error - prevError) / PID_DT
+      prevError    = error
 
-      // Feedforward
       let ff = gains.kS * Math.sign(setpointCTRE) + gains.kV * setpointCTRE
-      if (config.type === 'arm') {
-        ff += gains.kG * Math.cos(theta_mech)    // cosine gravity comp
-      } else if (config.type === 'elevator') {
-        ff += gains.kG                             // constant gravity comp
-      }
+      if (cfg.type === 'arm')      ff += gains.kG * Math.cos(theta_mech)
+      if (cfg.type === 'elevator') ff += gains.kG
 
-      voltage = gains.kP * error + gains.kI * integral + gains.kD * derivative + ff
-      voltage = Math.max(-SUPPLY_VOLTAGE, Math.min(SUPPLY_VOLTAGE, voltage))
+      voltage  = gains.kP * error + gains.kI * integral + gains.kD * deriv + ff
+      voltage  = Math.max(-SUPPLY_V, Math.min(SUPPLY_V, voltage))
       pidTimer = 0
     }
     pidTimer += PHYSICS_DT
 
-    // ── Motor physics (5 ms) ───────────────────────────────────────────────
-    // Current rotor angular velocity (rad/s)
-    let omega_rotor: number
-    if (config.type === 'flywheel') {
-      omega_rotor = omega_mech * config.gearRatio
-    } else if (config.type === 'arm') {
-      omega_rotor = omega_mech * config.gearRatio
-    } else {
-      omega_rotor = (v_elev / config.spoolRadiusM) * config.gearRatio
-    }
+    // Motor physics (5 ms)
+    const omega_rotor =
+      cfg.type === 'elevator'
+        ? (v_elev / cfg.spoolRadiusM) * cfg.gearRatio
+        : omega_mech * cfg.gearRatio
 
-    const v_bemf = omega_rotor / motor.KvRadPerSecPerVolt
-    const current = (voltage - v_bemf) / motor.resistanceOhms
-    const clampedCurrent = Math.max(-motor.stallCurrentA, Math.min(motor.stallCurrentA, current))
-    const torquePerMotor = clampedCurrent * motor.KtNmPerAmp
+    const v_bemf   = omega_rotor / motor.KvRadPerSecPerVolt
+    const current  = Math.max(-motor.stallCurrentA,
+                       Math.min(motor.stallCurrentA,
+                         (voltage - v_bemf) / motor.resistanceOhms))
+    const tau_per  = current * motor.KtNmPerAmp
 
-    if (config.type === 'flywheel') {
-      const torque_mech = torquePerMotor * config.numMotors * config.gearRatio
-      omega_mech += (torque_mech / J_eff) * PHYSICS_DT
+    if (cfg.type === 'flywheel') {
+      omega_mech += (tau_per * cfg.numMotors * cfg.gearRatio / J_eff) * PHYSICS_DT
 
-    } else if (config.type === 'arm') {
-      const torque_mech = torquePerMotor * config.numMotors * config.gearRatio
-      const torque_gravity = config.massKg * GRAVITY * (config.lengthM / 2) * Math.cos(theta_mech)
-      const alpha = (torque_mech - torque_gravity) / J_eff
-      omega_mech += alpha * PHYSICS_DT
-      theta_mech += omega_mech * PHYSICS_DT
+    } else if (cfg.type === 'arm') {
+      const tau_grav = cfg.massKg * GRAVITY * (cfg.lengthM / 2) * Math.cos(theta_mech)
+      const alpha    = (tau_per * cfg.numMotors * cfg.gearRatio - tau_grav) / J_eff
+      omega_mech    += alpha * PHYSICS_DT
+      theta_mech    += omega_mech * PHYSICS_DT
 
     } else {
-      const force_motor = torquePerMotor * config.numMotors * config.gearRatio / config.spoolRadiusM
-      const force_net = force_motor - config.massKg * GRAVITY
-      v_elev += (force_net / J_eff) * PHYSICS_DT
-      y_elev = Math.max(0, y_elev + v_elev * PHYSICS_DT)
-      if (y_elev === 0 && v_elev < 0) v_elev = 0   // floor collision
+      const F_motor  = tau_per * cfg.numMotors * cfg.gearRatio / cfg.spoolRadiusM
+      const accel    = (F_motor - cfg.massKg * GRAVITY) / J_eff
+      v_elev        += accel * PHYSICS_DT
+      y_elev         = Math.max(0, y_elev + v_elev * PHYSICS_DT)
+      if (y_elev === 0 && v_elev < 0) v_elev = 0
     }
 
-    // ── Record point ───────────────────────────────────────────────────────
-    if (stepCount % recordEvery === 0) {
-      let actualDisplay: number
-      if (config.type === 'flywheel') {
-        actualDisplay = siToDisplayUnits(omega_mech, config)
-      } else if (config.type === 'arm') {
-        actualDisplay = siToDisplayUnits(theta_mech, config)
-      } else {
-        actualDisplay = y_elev
-      }
+    // Record at 20 ms
+    if (step % RECORD_EVERY === 0) {
+      const actualDisplay =
+        cfg.type === 'flywheel' ? siToDisplay(omega_mech, cfg) :
+        cfg.type === 'arm'      ? siToDisplay(theta_mech, cfg) : y_elev
 
       points.push({
-        time: parseFloat(t.toFixed(3)),
+        time:     parseFloat((timeOffset + t).toFixed(3)),
         setpoint: setpointDisplay,
-        actual: parseFloat(actualDisplay.toFixed(4))
+        actual:   parseFloat(actualDisplay.toFixed(4))
       })
     }
-    stepCount++
+    step++
   }
 
+  // Supress the free-speed warning — freeSpeedRadps is only used via the
+  // motor model and not referenced explicitly here.
+  void freeSpeedRadps
+
   const metrics = calculateMetrics(points, setpointDisplay)
-  return { points, metrics }
+  return {
+    points,
+    finalPhysics: { omega_mech, theta_mech, v_elev, y_elev },
+    metrics
+  }
+}
+
+// ─── Multi-step simulation ────────────────────────────────────────────────────
+
+export interface MultiStepResult {
+  points:              StepResponsePoint[]
+  segmentBoundaries:   number[]      // time values where setpoint changes
+  segmentMetrics:      StepMetrics[]
+  aggregateMetrics:    StepMetrics
+}
+
+export function runMultiStepSimulation(
+  cfg: MechanismConfig,
+  gains: Gains,
+  steps: TestStep[]
+): MultiStepResult {
+  if (steps.length === 0) {
+    const empty: StepMetrics = { riseTimeS: -1, overshootPct: 0, settlingTimeS: -1, steadyStateError: 0, oscillations: 0, score: 999 }
+    return { points: [], segmentBoundaries: [], segmentMetrics: [], aggregateMetrics: empty }
+  }
+
+  let physics            = defaultPhysicsState(cfg)
+  let timeOffset         = 0
+  const allPoints:       StepResponsePoint[] = []
+  const segBoundaries:   number[]            = []
+  const segMetrics:      StepMetrics[]       = []
+
+  for (const step of steps) {
+    const { points, finalPhysics, metrics } = runStep(
+      cfg, gains, step.setpointDisplay, step.durationS, physics, timeOffset
+    )
+    allPoints.push(...points)
+    segBoundaries.push(timeOffset)
+    segMetrics.push(metrics)
+    physics    = { ...finalPhysics, }  // carry state forward (mechanism doesn't reset)
+    timeOffset += step.durationS
+  }
+
+  return {
+    points:           allPoints,
+    segmentBoundaries: segBoundaries,
+    segmentMetrics:   segMetrics,
+    aggregateMetrics: aggregateMetrics(segMetrics)
+  }
+}
+
+// Backward-compat wrapper used by baseline gain calc and live mode scoring
+export function runSimulation(
+  cfg: MechanismConfig,
+  gains: Gains,
+  setpointDisplay: number,
+  durationS = 2.0
+): { points: StepResponsePoint[]; metrics: StepMetrics } {
+  if (durationS <= 0) {
+    return { points: [], metrics: { riseTimeS: -1, overshootPct: 0, settlingTimeS: -1, steadyStateError: 0, oscillations: 0, score: 999 } }
+  }
+  const result = runMultiStepSimulation(cfg, gains, [{ setpointDisplay, durationS }])
+  return { points: result.points, metrics: result.aggregateMetrics }
 }
 
 // ─── Metrics ──────────────────────────────────────────────────────────────────
 
 function calculateMetrics(points: StepResponsePoint[], setpoint: number): StepMetrics {
   if (points.length === 0 || setpoint === 0) {
-    return { riseTimeS: -1, overshootPct: 0, settlingTimeS: -1, steadyStateError: 0, score: 999 }
+    return { riseTimeS: -1, overshootPct: 0, settlingTimeS: -1, steadyStateError: 0, oscillations: 0, score: 999 }
   }
 
   const band = 0.02 * Math.abs(setpoint)
-  let rise10 = -1
-  let rise90 = -1
-  let maxActual = -Infinity
-  let settlingTime = -1
+  let rise10 = -1, rise90 = -1, maxActual = -Infinity, settlingTime = -1
 
   for (const pt of points) {
     if (pt.actual > maxActual) maxActual = pt.actual
@@ -237,52 +248,232 @@ function calculateMetrics(points: StepResponsePoint[], setpoint: number): StepMe
     if (rise90 < 0 && pt.actual >= 0.9 * setpoint) rise90 = pt.time
   }
 
-  // Settling: last time the response is outside the 2% band
   for (let i = points.length - 1; i >= 0; i--) {
     if (Math.abs(points[i].actual - setpoint) > band) {
       settlingTime = i + 1 < points.length ? points[i + 1].time : points[i].time
       break
     }
   }
-  if (settlingTime < 0) settlingTime = 0  // already settled at t=0 (unusual but fine)
+  if (settlingTime < 0) settlingTime = 0
 
-  const riseTimeS = rise90 >= 0 && rise10 >= 0 ? rise90 - rise10 : -1
-  const overshootPct = setpoint > 0
-    ? Math.max(0, (maxActual - setpoint) / Math.abs(setpoint) * 100)
-    : 0
+  const riseTimeS    = rise90 >= 0 && rise10 >= 0 ? rise90 - rise10 : -1
+  const overshootPct = setpoint > 0 ? Math.max(0, (maxActual - setpoint) / Math.abs(setpoint) * 100) : 0
+  const oscillations = countOscillations(points, setpoint)
 
-  const lastN = Math.max(1, Math.floor(points.length * 0.2))
-  const ssError = points.slice(-lastN).reduce(
-    (sum, pt) => sum + Math.abs(pt.setpoint - pt.actual), 0
-  ) / lastN
-  const ssErrorPct = Math.abs(setpoint) > 0 ? ssError / Math.abs(setpoint) * 100 : ssError
+  const lastN    = Math.max(1, Math.floor(points.length * 0.2))
+  const ssError  = points.slice(-lastN).reduce((s, p) => s + Math.abs(p.setpoint - p.actual), 0) / lastN
 
-  // Composite score (lower = better); weights tuned for FRC feel
-  const score =
-    overshootPct * 0.35 +
-    (riseTimeS >= 0 ? riseTimeS * 30 : 60) * 0.30 +
-    (settlingTime >= 0 ? settlingTime * 15 : 30) * 0.25 +
-    ssErrorPct * 0.10
+  const score = computeScore(riseTimeS, overshootPct, settlingTime, ssError, setpoint, oscillations)
 
+  return { riseTimeS, overshootPct, settlingTimeS: settlingTime, steadyStateError: ssError, oscillations, score }
+}
+
+function countOscillations(points: StepResponsePoint[], setpoint: number): number {
+  // Count error zero-crossings inside the 20% band, after initial approach
+  const band   = 0.20 * Math.abs(setpoint)
+  let prevSign = 0
+  let settled  = false
+  let crossings = 0
+
+  for (const pt of points) {
+    const err = pt.actual - setpoint
+    // Only start counting once we've gotten within 80% of the setpoint
+    if (!settled && Math.abs(err) <= Math.abs(setpoint) * 0.8) settled = true
+    if (!settled) continue
+    // Only count crossings inside the 20% band (ignores large transient)
+    if (Math.abs(err) > band) { prevSign = 0; continue }
+    const sign = Math.sign(err) || prevSign
+    if (prevSign !== 0 && sign !== prevSign) crossings++
+    prevSign = sign
+  }
+  return crossings
+}
+
+function computeScore(
+  riseTimeS: number,
+  overshootPct: number,
+  settlingTimeS: number,
+  ssError: number,
+  setpoint: number,
+  oscillations: number
+): number {
+  // Oscillation: exponential penalty — 2 crossings is very bad, 3+ is disqualifying
+  const oscPenalty =
+    oscillations === 0 ? 0 :
+    oscillations === 1 ? 4 :
+    oscillations === 2 ? 20 :
+    50 * (oscillations - 1)
+
+  // Overshoot: gentle below 5%, increasingly painful above
+  const ovPenalty =
+    overshootPct < 5  ? overshootPct * 0.3 :
+    overshootPct < 15 ? 1.5 + (overshootPct - 5) * 2.0 :
+    21.5 + (overshootPct - 15) * 4.0
+
+  // Rise time: penalise slow response (never reached = worst)
+  const rtPenalty  = riseTimeS  < 0 ? 60 : riseTimeS  * 25
+
+  // Settling time
+  const stPenalty  = settlingTimeS < 0 ? 40 : settlingTimeS * 12
+
+  // SS error as % of setpoint
+  const ssErrPct   = Math.abs(setpoint) > 0 ? (ssError / Math.abs(setpoint)) * 100 : ssError
+  const ssPenalty  = ssErrPct * 1.5
+
+  return oscPenalty + ovPenalty + rtPenalty + stPenalty + ssPenalty
+}
+
+function aggregateMetrics(segs: StepMetrics[]): StepMetrics {
+  if (segs.length === 0) return { riseTimeS: -1, overshootPct: 0, settlingTimeS: -1, steadyStateError: 0, oscillations: 0, score: 999 }
+  const avg = (fn: (m: StepMetrics) => number) => segs.reduce((s, m) => s + fn(m), 0) / segs.length
   return {
-    riseTimeS,
-    overshootPct,
-    settlingTimeS: settlingTime,
-    steadyStateError: ssError,
-    score
+    riseTimeS:        avg(m => m.riseTimeS),
+    overshootPct:     avg(m => m.overshootPct),
+    settlingTimeS:    avg(m => m.settlingTimeS),
+    steadyStateError: avg(m => m.steadyStateError),
+    oscillations:     segs.reduce((s, m) => s + m.oscillations, 0),
+    score:            avg(m => m.score),   // avg score across segments
   }
 }
 
-// ─── Display unit labels ──────────────────────────────────────────────────────
+// ─── Progressive test sequences ───────────────────────────────────────────────
 
-export function displayUnitLabel(config: MechanismConfig): string {
-  if (config.type === 'flywheel') return 'RPM'
-  if (config.type === 'arm') return '°'
+export function getTestSequence(
+  mechType: MechanismType,
+  nominalSetpoint: number,
+  expCount: number
+): TestStep[] {
+  const s = nominalSetpoint
+
+  if (mechType === 'flywheel') {
+    if (expCount < 3) return [
+      { setpointDisplay: s,          durationS: 2.0 }
+    ]
+    if (expCount < 8) return [
+      { setpointDisplay: s * 0.5,   durationS: 1.0 },
+      { setpointDisplay: s,          durationS: 2.0 },
+    ]
+    if (expCount < 15) return [
+      { setpointDisplay: s * 0.25,  durationS: 0.8 },
+      { setpointDisplay: s,          durationS: 1.5 },
+      { setpointDisplay: s * 0.6,   durationS: 1.0 },
+      { setpointDisplay: s,          durationS: 1.5 },
+    ]
+    return [
+      { setpointDisplay: s * 0.25,  durationS: 0.8 },
+      { setpointDisplay: s * 0.75,  durationS: 1.0 },
+      { setpointDisplay: s * 0.4,   durationS: 0.7 },
+      { setpointDisplay: s,          durationS: 1.5 },
+      { setpointDisplay: s * 0.55,  durationS: 0.8 },
+      { setpointDisplay: s,          durationS: 1.5 },
+    ]
+  }
+
+  if (mechType === 'arm') {
+    const low = Math.max(0, s * 0.05)
+    if (expCount < 3) return [
+      { setpointDisplay: s,          durationS: 2.0 }
+    ]
+    if (expCount < 8) return [
+      { setpointDisplay: s,          durationS: 1.5 },
+      { setpointDisplay: low,        durationS: 1.0 },
+    ]
+    if (expCount < 15) return [
+      { setpointDisplay: s * 0.5,   durationS: 1.0 },
+      { setpointDisplay: s,          durationS: 1.5 },
+      { setpointDisplay: low,        durationS: 1.0 },
+      { setpointDisplay: s,          durationS: 1.5 },
+    ]
+    return [
+      { setpointDisplay: s * 0.3,   durationS: 0.8 },
+      { setpointDisplay: s * 0.8,   durationS: 1.0 },
+      { setpointDisplay: low,        durationS: 0.8 },
+      { setpointDisplay: s * 0.6,   durationS: 1.0 },
+      { setpointDisplay: s,          durationS: 1.5 },
+      { setpointDisplay: low,        durationS: 0.8 },
+    ]
+  }
+
+  // elevator
+  const low = s * 0.05
+  if (expCount < 3) return [
+    { setpointDisplay: s,            durationS: 2.0 }
+  ]
+  if (expCount < 8) return [
+    { setpointDisplay: s,            durationS: 1.5 },
+    { setpointDisplay: low,          durationS: 1.0 },
+  ]
+  if (expCount < 15) return [
+    { setpointDisplay: s * 0.5,     durationS: 1.0 },
+    { setpointDisplay: s,            durationS: 1.5 },
+    { setpointDisplay: low,          durationS: 1.0 },
+    { setpointDisplay: s,            durationS: 1.5 },
+  ]
+  return [
+    { setpointDisplay: s * 0.2,     durationS: 0.8 },
+    { setpointDisplay: s * 0.8,     durationS: 1.0 },
+    { setpointDisplay: low,          durationS: 0.8 },
+    { setpointDisplay: s * 0.5,     durationS: 1.0 },
+    { setpointDisplay: s,            durationS: 1.5 },
+    { setpointDisplay: low,          durationS: 0.8 },
+  ]
+}
+
+export function phaseLabel(expCount: number): string {
+  if (expCount < 3)  return 'Phase 1 — single step'
+  if (expCount < 8)  return 'Phase 2 — bidirectional'
+  if (expCount < 15) return 'Phase 3 — multi-setpoint'
+  return 'Phase 4 — full sweep'
+}
+
+// ─── Display unit label ───────────────────────────────────────────────────────
+
+export function displayUnitLabel(cfg: MechanismConfig): string {
+  if (cfg.type === 'flywheel') return 'RPM'
+  if (cfg.type === 'arm')      return '°'
   return 'm'
 }
 
-export function defaultSetpoint(config: MechanismConfig): number {
-  if (config.type === 'flywheel') return 3000   // RPM
-  if (config.type === 'arm') return 45           // degrees
-  return 1.0                                     // meters
+export function defaultSetpoint(cfg: MechanismConfig): number {
+  if (cfg.type === 'flywheel') return 3000
+  if (cfg.type === 'arm')      return 45
+  return 1.0
+}
+
+// ─── Baseline gain calculator ─────────────────────────────────────────────────
+
+export function calculateBaselineGains(cfg: MechanismConfig): import('../types').Gains {
+  const motor  = MOTORS[cfg.motorType]
+  const kV     = motorKvCTRE(motor)
+
+  let J_mech: number
+  if      (cfg.type === 'flywheel') J_mech = 0.5 * cfg.massKg * cfg.radiusM ** 2
+  else if (cfg.type === 'arm')      J_mech = (1 / 3) * cfg.massKg * cfg.lengthM ** 2
+  else                              J_mech = cfg.massKg * cfg.spoolRadiusM ** 2
+
+  const J_motor  = cfg.numMotors * motor.rotorInertiaKgM2 * cfg.gearRatio ** 2
+  const J_total  = J_mech + J_motor
+
+  // kA: voltage per (RPS/s of rotor acceleration)
+  const kA = J_total * motor.resistanceOhms * 2 * Math.PI /
+    (motor.KtNmPerAmp * cfg.numMotors * cfg.gearRatio ** 2)
+
+  let kG = 0
+  if (cfg.type === 'arm') {
+    kG = cfg.massKg * GRAVITY * (cfg.lengthM / 2) * motor.resistanceOhms /
+      (motor.KtNmPerAmp * cfg.numMotors * cfg.gearRatio)
+  } else if (cfg.type === 'elevator') {
+    kG = cfg.massKg * GRAVITY * cfg.spoolRadiusM * motor.resistanceOhms /
+      (motor.KtNmPerAmp * cfg.numMotors * cfg.gearRatio)
+  }
+
+  return {
+    kP: cfg.type === 'flywheel' ? 0.05 : 1.0,
+    kI: 0,
+    kD: 0,
+    kS: 0.25,
+    kV: parseFloat(kV.toFixed(4)),
+    kA: parseFloat(kA.toFixed(4)),
+    kG: parseFloat(kG.toFixed(4)),
+  }
 }

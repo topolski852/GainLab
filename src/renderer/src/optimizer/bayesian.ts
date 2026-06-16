@@ -1,12 +1,12 @@
-import { Gains, GainBounds, OptimizerEntry } from '../types'
+import { Gains, GainBounds, OptimizerEntry, PhaseInfo } from '../types'
 
 // ─── Gaussian Process ─────────────────────────────────────────────────────────
 // Squared-exponential (RBF) kernel, Cholesky-based exact inference.
 // Operates on normalized [0,1] gain vectors.
 
-const NOISE_VAR = 0.01     // observation noise variance
-const AMPLITUDE = 1.0      // kernel amplitude
-const LENGTH_SCALE = 0.3   // RBF length scale (in normalized space)
+const NOISE_VAR    = 0.01
+const AMPLITUDE    = 1.0
+const LENGTH_SCALE = 0.3
 
 function rbf(a: number[], b: number[]): number {
   let sq = 0
@@ -17,7 +17,6 @@ function rbf(a: number[], b: number[]): number {
   return AMPLITUDE * Math.exp(-0.5 * sq)
 }
 
-// Cholesky decomposition of positive-definite matrix A → lower triangular L
 function cholesky(A: number[][]): number[][] {
   const n = A.length
   const L: number[][] = Array.from({ length: n }, () => new Array(n).fill(0))
@@ -31,7 +30,6 @@ function cholesky(A: number[][]): number[][] {
   return L
 }
 
-// Solve L·x = b (forward), then Lᵀ·x = b (backward)
 function solveCholesky(L: number[][], b: number[]): number[] {
   const n = L.length
   const y = new Array<number>(n).fill(0)
@@ -49,14 +47,9 @@ function solveCholesky(L: number[][], b: number[]): number[] {
   return x
 }
 
-interface GPResult {
-  mean: number
-  std: number
-}
-
 class GaussianProcess {
-  private X: number[][] = []   // normalized training inputs
-  private y: number[] = []     // training targets (quality: higher = better)
+  private X: number[][] = []
+  private y: number[] = []
   private L: number[][] = []
   private alpha: number[] = []
 
@@ -73,49 +66,56 @@ class GaussianProcess {
     this.alpha = solveCholesky(this.L, y)
   }
 
-  predict(xStar: number[]): GPResult {
+  predict(xStar: number[]): { mean: number; std: number } {
     if (this.X.length === 0) return { mean: 0, std: 1 }
-    const kStar = this.X.map(x => rbf(x, xStar))
+    const kStar     = this.X.map(x => rbf(x, xStar))
     const kStarStar = rbf(xStar, xStar)
-    const mean = kStar.reduce((s, k, i) => s + k * this.alpha[i], 0)
-    const v = solveCholesky(this.L, kStar)
-    const variance = kStarStar - v.reduce((s, vi, i) => s + vi * kStar[i], 0)
+    const mean      = kStar.reduce((s, k, i) => s + k * this.alpha[i], 0)
+    const v         = solveCholesky(this.L, kStar)
+    const variance  = kStarStar - v.reduce((s, vi, i) => s + vi * kStar[i], 0)
     return { mean, std: Math.sqrt(Math.max(0, variance)) }
   }
 }
 
-// ─── Normal distribution helpers ──────────────────────────────────────────────
+// ─── Acquisition: Upper Confidence Bound ──────────────────────────────────────
+// UCB = mean + β·std  (maximize).
+// β decays from 2.5→0.3 over the first 50 UCB experiments, promoting
+// exploration early and exploitation later.
 
-function normalCDF(z: number): number {
-  // Abramowitz & Stegun approximation
-  const t = 1 / (1 + 0.2316419 * Math.abs(z))
-  const poly = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))))
-  const pdf = Math.exp(-0.5 * z * z) / Math.sqrt(2 * Math.PI)
-  const p = 1 - pdf * poly
-  return z >= 0 ? p : 1 - p
+function getBeta(ucbCount: number): number {
+  const decay = Math.pow(Math.max(0, 1 - ucbCount / 50), 0.5)
+  return Math.max(0.3, 2.5 * decay)
 }
 
-function normalPDF(z: number): number {
-  return Math.exp(-0.5 * z * z) / Math.sqrt(2 * Math.PI)
+// Diversity: minimum euclidean distance to any observed normalized point
+function minDistTo(v: number[], observed: number[][]): number {
+  if (observed.length === 0) return Infinity
+  let minSq = Infinity
+  for (const o of observed) {
+    let sq = 0
+    for (let i = 0; i < v.length; i++) { const d = v[i] - o[i]; sq += d * d }
+    if (sq < minSq) minSq = sq
+  }
+  return Math.sqrt(minSq)
 }
 
-// Expected Improvement acquisition (maximize quality; yBest = best observed quality so far)
-function expectedImprovement(mean: number, std: number, yBest: number, xi = 0.01): number {
-  if (std < 1e-8) return 0
-  const z = (mean - yBest - xi) / std
-  return (mean - yBest - xi) * normalCDF(z) + std * normalPDF(z)
-}
+// ─── Structured initial exploration ───────────────────────────────────────────
+// First STRUCTURED_COUNT experiments sweep kP across three decades so the
+// GP has meaningful observations spanning the whole gain space before UCB runs.
+
+const STRUCTURED_COUNT = 7
+const STRUCTURED_KP    = [0.001, 0.01, 0.05, 0.2, 0.5, 1.5, 5.0]
 
 // ─── Gain space normalization ─────────────────────────────────────────────────
 
 export function defaultBounds(hasGravity: boolean): GainBounds {
   return {
-    kP: { min: 0.001, max: 10 },
-    kI: { min: 0, max: 1 },
-    kD: { min: 0, max: 1 },
-    kS: { min: 0, max: 1 },
-    kV: { min: 0, max: 0.5 },
-    kA: { min: 0, max: 0.5 },
+    kP: { min: 0.001, max: 10  },
+    kI: { min: 0,     max: 1   },
+    kD: { min: 0,     max: 1   },
+    kS: { min: 0,     max: 1   },
+    kV: { min: 0,     max: 0.5 },
+    kA: { min: 0,     max: 0.5 },
     kG: hasGravity ? { min: 0, max: 2 } : { min: 0, max: 0 }
   }
 }
@@ -139,7 +139,7 @@ function denormalize(v: number[], bounds: GainBounds): Gains {
   return g as Gains
 }
 
-function randomVector(dim: number): number[] {
+function randomVec(dim: number): number[] {
   return Array.from({ length: dim }, () => Math.random())
 }
 
@@ -155,69 +155,102 @@ export class BayesianOptimizer {
     this.bounds = bounds
   }
 
-  // quality = -score (higher = better), stored so GP maximizes quality
+  // quality = −score (higher = better), GP maximizes quality
   observe(entry: OptimizerEntry): void {
     this.history.push(entry)
-    const X = this.history.map(e => normalize(e.gains, this.bounds))
-    const y = this.history.map(e => -e.metrics.score)  // negate: lower score = higher quality
-    this.gp.fit(X, y)
+    // Fit GP only once we have enough structured observations to be meaningful
+    if (this.history.length >= STRUCTURED_COUNT) {
+      const X = this.history.map(e => normalize(e.gains, this.bounds))
+      const y = this.history.map(e => -e.metrics.score)
+      this.gp.fit(X, y)
+    }
   }
 
-  // Suggest next gains via EI maximization over random samples + local hill-climbing
   suggest(fixedGains: Partial<Gains> = {}): Gains {
-    if (this.history.length < 2) {
-      return this.randomGains(fixedGains)
-    }
+    const n = this.history.length
 
-    const yBest = Math.max(...this.history.map(e => -e.metrics.score))
-    const CANDIDATES = 512
-    let bestEI = -Infinity
-    let bestVec = randomVector(this.dim)
-
-    for (let c = 0; c < CANDIDATES; c++) {
-      const v = randomVector(this.dim)
-      const { mean, std } = this.gp.predict(v)
-      const ei = expectedImprovement(mean, std, yBest)
-      if (ei > bestEI) {
-        bestEI = ei
-        bestVec = v
+    // ── Structured phase ──────────────────────────────────────────────────────
+    if (n < STRUCTURED_COUNT) {
+      const base: Gains = {
+        kP: STRUCTURED_KP[n],
+        kI: 0,
+        kD: 0,
+        kS: 0.25,
+        kV: 0,
+        kA: 0,
+        kG: 0,
+        ...fixedGains,
       }
+      base.kP = STRUCTURED_KP[n]   // fixedGains must not override the sweep kP
+      return base
     }
 
-    // Simple coordinate-wise hill climb from the best candidate
+    // ── UCB phase ─────────────────────────────────────────────────────────────
+    const ucbCount = n - STRUCTURED_COUNT
+    const beta     = getBeta(ucbCount)
+    const observed = this.history.map(e => normalize(e.gains, this.bounds))
+
+    let bestScore = -Infinity
+    let bestVec   = randomVec(this.dim)
+    const CANDIDATES = 512
+    let diverseMin   = 0.08
+
+    // Sample candidates; relax diversity requirement if nothing diverse found
+    while (diverseMin >= 0) {
+      let found = false
+      for (let c = 0; c < CANDIDATES; c++) {
+        const v = randomVec(this.dim)
+        if (diverseMin > 0 && minDistTo(v, observed) < diverseMin) continue
+        const { mean, std } = this.gp.predict(v)
+        const s = mean + beta * std
+        if (s > bestScore) { bestScore = s; bestVec = v; found = true }
+      }
+      if (found) break
+      diverseMin -= 0.02
+    }
+
+    // Coordinate-wise hill-climb from best candidate
     for (let iter = 0; iter < 20; iter++) {
       let improved = false
       for (let d = 0; d < this.dim; d++) {
         for (const delta of [-0.05, 0.05]) {
           const v = [...bestVec]
           v[d] = Math.max(0, Math.min(1, v[d] + delta))
+          if (minDistTo(v, observed) < 0.04) continue   // soft diversity floor in hill-climb
           const { mean, std } = this.gp.predict(v)
-          const ei = expectedImprovement(mean, std, yBest)
-          if (ei > bestEI) {
-            bestEI = ei
-            bestVec = v
-            improved = true
-          }
+          const s = mean + beta * std
+          if (s > bestScore) { bestScore = s; bestVec = v; improved = true }
         }
       }
       if (!improved) break
     }
 
-    const suggested = denormalize(bestVec, this.bounds)
-    // Apply any fixed gains (kV and kG from physics are good starting points)
-    return { ...suggested, ...fixedGains }
+    return { ...denormalize(bestVec, this.bounds), ...fixedGains }
   }
 
-  randomGains(fixedGains: Partial<Gains> = {}): Gains {
-    const v = randomVector(this.dim)
-    const g = denormalize(v, this.bounds)
-    // Keep kV and kG close to physics baseline for first random explorations
-    return { ...g, ...fixedGains }
+  getPhaseInfo(): PhaseInfo {
+    const n = this.history.length
+    if (n < STRUCTURED_COUNT) {
+      return {
+        phase: 'structured',
+        label: 'Structured Sweep',
+        description: `Systematic kP sweep  ${n} / ${STRUCTURED_COUNT}`,
+        progressPct: (n / STRUCTURED_COUNT) * 100
+      }
+    }
+    const ucbCount = n - STRUCTURED_COUNT
+    const beta = getBeta(ucbCount).toFixed(2)
+    return {
+      phase: 'ucb',
+      label: 'Bayesian UCB',
+      description: `β = ${beta}  ·  ${ucbCount} UCB experiment${ucbCount !== 1 ? 's' : ''}`,
+      progressPct: Math.min(100, (ucbCount / 50) * 100)
+    }
   }
 
   bestEntry(): OptimizerEntry | null {
     if (this.history.length === 0) return null
-    return this.history.reduce((best, e) => e.metrics.score < best.metrics.score ? e : best)
+    return this.history.reduce((b, e) => e.metrics.score < b.metrics.score ? e : b)
   }
 
   get experimentCount(): number {

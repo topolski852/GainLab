@@ -951,6 +951,89 @@ body::before {
 ::-webkit-scrollbar-thumb      { background: var(--border-accent); }
 ::-webkit-scrollbar-thumb:hover{ background: var(--border-normal); }
 
+/* ── Phase indicator ─────────────────────────────────────────────────────────── */
+.phase-indicator {
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--chamfer-sm);
+}
+
+.phase-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.phase-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.phase-structured {
+  background: rgba(240,180,41,0.12);
+  color: var(--gold-bright);
+  border: 1px solid rgba(240,180,41,0.25);
+}
+
+.phase-ucb {
+  background: var(--blue-glow);
+  color: var(--blue-bright);
+  border: 1px solid rgba(59,130,246,0.25);
+}
+
+.phase-exp-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.phase-description {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.phase-progress-track {
+  height: 3px;
+  background: var(--border-subtle);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.phase-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.phase-progress-fill.phase-structured {
+  background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright));
+  border: none;
+}
+
+.phase-progress-fill.phase-ucb {
+  background: linear-gradient(90deg, var(--blue-dim), var(--blue-bright));
+  border: none;
+}
+
+/* Segment count badge in graph header */
+.segment-count {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  margin-left: 8px;
+}
+
 /* ── Recharts overrides ───────────────────────────────────────────────────────── */
 .recharts-cartesian-axis-tick-value { fill: var(--text-muted); font-size: 11px; }
 .recharts-legend-item-text { color: var(--text-secondary) !important; font-size: 11px; }

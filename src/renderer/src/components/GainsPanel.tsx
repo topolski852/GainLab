@@ -1,4 +1,4 @@
-import { Gains, StepMetrics, MechanismType, OptimizerEntry } from '../types'
+import { Gains, StepMetrics, MechanismType, OptimizerEntry, PhaseInfo } from '../types'
 
 interface Props {
   gains: Gains
@@ -6,7 +6,7 @@ interface Props {
   mechanismType: MechanismType
   testCount: number
   isRunning: boolean
-  canSuggest: boolean
+  phaseInfo: PhaseInfo
   history: OptimizerEntry[]
   onGainsChange: (g: Gains) => void
   onRunTest: () => void
@@ -15,24 +15,30 @@ interface Props {
 }
 
 const GAIN_DEFS: { key: keyof Gains; label: string; unit: string; step: number; min: number }[] = [
-  { key: 'kP', label: 'kP', unit: 'V/err',   step: 0.001, min: 0 },
-  { key: 'kI', label: 'kI', unit: 'V/err·s', step: 0.0001, min: 0 },
-  { key: 'kD', label: 'kD', unit: 'V·s/err', step: 0.001, min: 0 },
-  { key: 'kS', label: 'kS', unit: 'V',       step: 0.01,  min: 0 },
-  { key: 'kV', label: 'kV', unit: 'V·s/rot', step: 0.001, min: 0 },
-  { key: 'kA', label: 'kA', unit: 'V·s²/rot',step: 0.001, min: 0 },
-  { key: 'kG', label: 'kG', unit: 'V',       step: 0.01,  min: 0 }
+  { key: 'kP', label: 'kP', unit: 'V/err',    step: 0.001,  min: 0 },
+  { key: 'kI', label: 'kI', unit: 'V/err·s',  step: 0.0001, min: 0 },
+  { key: 'kD', label: 'kD', unit: 'V·s/err',  step: 0.001,  min: 0 },
+  { key: 'kS', label: 'kS', unit: 'V',        step: 0.01,   min: 0 },
+  { key: 'kV', label: 'kV', unit: 'V·s/rot',  step: 0.001,  min: 0 },
+  { key: 'kA', label: 'kA', unit: 'V·s²/rot', step: 0.001,  min: 0 },
+  { key: 'kG', label: 'kG', unit: 'V',        step: 0.01,   min: 0 }
 ]
 
 function scoreColor(score: number): string {
-  if (score < 5) return 'var(--success)'
+  if (score < 5)  return 'var(--success)'
   if (score < 15) return 'var(--gold-bright)'
+  return 'var(--error)'
+}
+
+function oscColor(n: number): string {
+  if (n === 0) return 'var(--success)'
+  if (n <= 2)  return 'var(--gold-bright)'
   return 'var(--error)'
 }
 
 export default function GainsPanel({
   gains, metrics, mechanismType, testCount, isRunning,
-  canSuggest, history, onGainsChange, onRunTest, onSuggest, onExport
+  phaseInfo, history, onGainsChange, onRunTest, onSuggest, onExport
 }: Props): JSX.Element {
 
   const showKG = mechanismType === 'arm' || mechanismType === 'elevator'
@@ -46,6 +52,8 @@ export default function GainsPanel({
   const bestEntry = history.length > 0
     ? history.reduce((b, e) => e.metrics.score < b.metrics.score ? e : b)
     : null
+
+  const isStructured = phaseInfo.phase === 'structured'
 
   return (
     <div className="gains-panel">
@@ -71,7 +79,26 @@ export default function GainsPanel({
 
       <div className="section-divider" />
 
-      {/* Metrics */}
+      {/* Optimizer phase indicator */}
+      <div className="phase-indicator">
+        <div className="phase-header">
+          <span className={`phase-badge ${isStructured ? 'phase-structured' : 'phase-ucb'}`}>
+            {phaseInfo.label}
+          </span>
+          <span className="phase-exp-count">{testCount} exp</span>
+        </div>
+        <div className="phase-description">{phaseInfo.description}</div>
+        <div className="phase-progress-track">
+          <div
+            className={`phase-progress-fill ${isStructured ? 'phase-structured' : 'phase-ucb'}`}
+            style={{ width: `${phaseInfo.progressPct}%` }}
+          />
+        </div>
+      </div>
+
+      <div className="section-divider" />
+
+      {/* Results */}
       <div className="section-label">Results</div>
       {metrics ? (
         <div className="metrics-list">
@@ -90,6 +117,11 @@ export default function GainsPanel({
               : metrics.settlingTimeS.toFixed(3) + ' s'}
           />
           <MetricRow label="SS Error" value={metrics.steadyStateError.toFixed(4)} />
+          <MetricRow
+            label="Oscillations"
+            value={metrics.oscillations === 0 ? 'None' : `${metrics.oscillations} crossing${metrics.oscillations !== 1 ? 's' : ''}`}
+            color={oscColor(metrics.oscillations)}
+          />
           <div className="metric-score-row">
             <span className="metric-score-label">Score</span>
             <span className="metric-score-value" style={{ color: scoreColor(metrics.score) }}>
@@ -121,8 +153,10 @@ export default function GainsPanel({
         <button
           className="btn btn-secondary"
           onClick={onSuggest}
-          disabled={!canSuggest || isRunning}
-          title={!canSuggest ? `Run ${2 - testCount} more test${testCount === 1 ? '' : 's'} to enable optimizer` : 'Suggest gains via Bayesian optimizer'}
+          disabled={isRunning}
+          title={isStructured
+            ? `Suggest next structured kP sweep (${phaseInfo.description})`
+            : 'Suggest gains via Bayesian UCB optimizer'}
         >
           ◆ Suggest Next Gains
         </button>
@@ -134,14 +168,6 @@ export default function GainsPanel({
         >
           ↗ Export Java
         </button>
-      </div>
-
-      <div className="optimizer-status">
-        {testCount === 0 && <span>Run at least 2 tests to activate the Bayesian optimizer</span>}
-        {testCount === 1 && <span>One more test to activate optimizer…</span>}
-        {testCount >= 2 && <span className="optimizer-active">
-          ◆ Optimizer active · {testCount} experiment{testCount !== 1 ? 's' : ''}
-        </span>}
       </div>
 
       {/* History */}

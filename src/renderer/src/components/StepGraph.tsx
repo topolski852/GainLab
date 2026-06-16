@@ -13,6 +13,7 @@ import { StepResponsePoint, StepMetrics, MechanismType } from '../types'
 
 interface Props {
   data: StepResponsePoint[]
+  segmentBoundaries: number[]
   unitLabel: string
   mechanismType: MechanismType
   metrics: StepMetrics | null
@@ -25,14 +26,20 @@ function formatTime(v: number): string {
 function metricColor(key: string, value: number): string {
   if (key === 'overshoot') {
     if (value > 10) return 'var(--error)'
-    if (value > 5) return 'var(--gold-bright)'
+    if (value > 5)  return 'var(--gold-bright)'
+    return 'var(--success)'
+  }
+  if (key === 'oscillations') {
+    if (value >= 3) return 'var(--error)'
+    if (value >= 1) return 'var(--gold-bright)'
     return 'var(--success)'
   }
   return 'var(--text-secondary)'
 }
 
 function formatMetric(key: string, value: number, unitLabel: string): string {
-  if (key === 'overshoot') return value.toFixed(1) + ' %'
+  if (key === 'overshoot')    return value.toFixed(1) + ' %'
+  if (key === 'oscillations') return value === 0 ? 'None' : `${value}`
   if (key === 'riseTime' || key === 'settlingTime') {
     if (value < 0) return '—'
     return value < 1 ? (value * 1000).toFixed(0) + ' ms' : value.toFixed(2) + ' s'
@@ -57,17 +64,19 @@ function CustomTooltip({ active, payload, label, unitLabel }: any): JSX.Element 
   )
 }
 
-export default function StepGraph({ data, unitLabel, metrics }: Props): JSX.Element {
+export default function StepGraph({ data, segmentBoundaries, unitLabel, metrics }: Props): JSX.Element {
   const hasData = data.length > 0
 
   const metricItems = metrics ? [
-    { key: 'riseTime', label: 'Rise Time', value: metrics.riseTimeS },
-    { key: 'overshoot', label: 'Overshoot', value: metrics.overshootPct },
-    { key: 'settlingTime', label: 'Settling', value: metrics.settlingTimeS },
-    { key: 'ssError', label: 'SS Error', value: metrics.steadyStateError }
+    { key: 'riseTime',     label: 'Rise Time',   value: metrics.riseTimeS },
+    { key: 'overshoot',    label: 'Overshoot',   value: metrics.overshootPct },
+    { key: 'settlingTime', label: 'Settling',    value: metrics.settlingTimeS },
+    { key: 'ssError',      label: 'SS Error',    value: metrics.steadyStateError },
+    { key: 'oscillations', label: 'Oscillations',value: metrics.oscillations },
   ] : []
 
-  const setpointVal = hasData ? data[0].setpoint : null
+  // Segment change markers: all boundaries after the first (which is t=0)
+  const changeMarkers = segmentBoundaries.slice(1)
 
   return (
     <div className="step-graph-panel">
@@ -76,6 +85,11 @@ export default function StepGraph({ data, unitLabel, metrics }: Props): JSX.Elem
         {metrics && (
           <span className="score-badge">
             Score <strong>{metrics.score.toFixed(1)}</strong>
+          </span>
+        )}
+        {segmentBoundaries.length > 1 && (
+          <span className="segment-count">
+            {segmentBoundaries.length} steps
           </span>
         )}
       </div>
@@ -107,13 +121,18 @@ export default function StepGraph({ data, unitLabel, metrics }: Props): JSX.Elem
               <Legend
                 wrapperStyle={{ fontSize: 12, color: 'var(--text-secondary)', paddingTop: 4 }}
               />
-              {setpointVal !== null && (
+
+              {/* Vertical marker at each setpoint change */}
+              {changeMarkers.map(t => (
                 <ReferenceLine
-                  y={setpointVal}
-                  stroke="rgba(59,130,246,0.25)"
-                  strokeDasharray="8 4"
+                  key={t}
+                  x={t}
+                  stroke="rgba(240,180,41,0.30)"
+                  strokeDasharray="4 3"
+                  strokeWidth={1}
                 />
-              )}
+              ))}
+
               <Line
                 type="monotone"
                 dataKey="setpoint"

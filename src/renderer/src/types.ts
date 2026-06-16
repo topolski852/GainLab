@@ -20,9 +20,6 @@ export interface MechanismConfig {
 }
 
 // ─── Gains (CTRE Phoenix 6 units) ─────────────────────────────────────────────
-// Velocity control (flywheel): kP [V/(rot/s)], kV [V·s/rot], kA [V·s²/rot]
-// Position control (arm/elevator): kP [V/rot], kD [V·s/rot]
-// kS [V], kG [V]
 
 export interface Gains {
   kP: number
@@ -34,28 +31,46 @@ export interface Gains {
   kG: number
 }
 
+// ─── Test sequences ────────────────────────────────────────────────────────────
+
+export interface TestStep {
+  setpointDisplay: number   // in display units (RPM / deg / m)
+  durationS: number
+}
+
 // ─── Step Response ────────────────────────────────────────────────────────────
 
 export interface StepResponsePoint {
-  time: number      // seconds
-  setpoint: number  // in display units (RPM, deg, m)
-  actual: number    // in display units
+  time: number
+  setpoint: number    // display units — changes between steps in multi-step tests
+  actual: number      // display units
 }
 
 export interface StepMetrics {
-  riseTimeS: number      // 10% → 90% of setpoint, -1 if never reached
-  overshootPct: number   // max overshoot above setpoint (%)
-  settlingTimeS: number  // time to enter and stay within 2% band
-  steadyStateError: number // mean absolute error over last 20% of test
-  score: number          // composite quality score (lower = better)
+  riseTimeS: number
+  overshootPct: number
+  settlingTimeS: number
+  steadyStateError: number
+  oscillations: number    // zero-crossings of error inside 20% band (post-transient)
+  score: number           // composite quality score (lower = better)
 }
 
 // ─── Optimizer ────────────────────────────────────────────────────────────────
+
+export type ExplorationPhase = 'structured' | 'ucb'
+
+export interface PhaseInfo {
+  phase: ExplorationPhase
+  label: string
+  description: string
+  progressPct: number   // 0–100 within current phase
+}
 
 export interface OptimizerEntry {
   gains: Gains
   metrics: StepMetrics
   testIndex: number
+  steps: TestStep[]     // which sequence was run for this experiment
 }
 
 export interface GainBound {
@@ -80,8 +95,9 @@ export interface NT4Config {
 export interface AppState {
   mechanism: MechanismConfig
   gains: Gains
-  setpointDisplay: number  // setpoint in display units (RPM / deg / m)
+  setpointDisplay: number
   stepResponseData: StepResponsePoint[]
+  segmentBoundaries: number[]     // times (seconds) where setpoint changes
   metrics: StepMetrics | null
   optimizerHistory: OptimizerEntry[]
   connectionMode: ConnectionMode
