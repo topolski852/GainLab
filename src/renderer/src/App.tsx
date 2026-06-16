@@ -71,9 +71,10 @@ export default function App(): JSX.Element {
       setMetrics(result.aggregateMetrics)
 
       const entry: OptimizerEntry = {
-        gains:    { ...gains },
-        metrics:  result.aggregateMetrics,
-        testIndex: testCount,
+        gains:          { ...gains },
+        metrics:        result.aggregateMetrics,
+        segmentMetrics: result.segmentMetrics,
+        testIndex:      testCount,
         steps,
       }
       setHistory(prev => [...prev, entry])
@@ -161,10 +162,11 @@ export default function App(): JSX.Element {
       setMetrics(m)
 
       const entry: OptimizerEntry = {
-        gains:     { ...gains },
-        metrics:   m,
-        testIndex: testCount,
-        steps:     [{ setpointDisplay, durationS: 2.0 }],
+        gains:          { ...gains },
+        metrics:        m,
+        segmentMetrics: [],
+        testIndex:      testCount,
+        steps:          [{ setpointDisplay, durationS: 2.0 }],
       }
       setHistory(prev => [...prev, entry])
       setTestCount(prev => prev + 1)
@@ -234,7 +236,8 @@ export default function App(): JSX.Element {
         <GainsPanel
           gains={gains}
           metrics={metrics}
-          mechanismType={mechanism.type}
+          mechanism={mechanism}
+          nominalSetpoint={setpointDisplay}
           testCount={testCount}
           isRunning={isRunning}
           phaseInfo={phaseInfo}

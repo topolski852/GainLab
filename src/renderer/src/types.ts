@@ -68,9 +68,10 @@ export interface PhaseInfo {
 
 export interface OptimizerEntry {
   gains: Gains
-  metrics: StepMetrics
+  metrics: StepMetrics          // aggregate across all steps
+  segmentMetrics: StepMetrics[] // per-step breakdown
   testIndex: number
-  steps: TestStep[]     // which sequence was run for this experiment
+  steps: TestStep[]
 }
 
 export interface GainBound {

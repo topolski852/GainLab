@@ -1,9 +1,13 @@
-import { Gains, StepMetrics, MechanismType, OptimizerEntry, PhaseInfo } from '../types'
+import { useState } from 'react'
+import { Gains, StepMetrics, MechanismConfig, OptimizerEntry, PhaseInfo } from '../types'
+import { MOTORS } from '../physics/motors'
+import { displayUnitLabel } from '../physics/simulator'
 
 interface Props {
   gains: Gains
   metrics: StepMetrics | null
-  mechanismType: MechanismType
+  mechanism: MechanismConfig
+  nominalSetpoint: number
   testCount: number
   isRunning: boolean
   phaseInfo: PhaseInfo
@@ -36,12 +40,95 @@ function oscColor(n: number): string {
   return 'var(--error)'
 }
 
+function fmtTime(s: number): string {
+  if (s < 0)  return '—'
+  if (s < 1)  return (s * 1000).toFixed(0) + 'ms'
+  return s.toFixed(3) + 's'
+}
+
+function fmtPct(v: number): string { return v.toFixed(1) + '%' }
+
+// ─── Log formatter ────────────────────────────────────────────────────────────
+
+function buildLog(history: OptimizerEntry[], mechanism: MechanismConfig, nominalSetpoint: number): string {
+  const unitLabel = displayUnitLabel(mechanism)
+  const motor     = MOTORS[mechanism.motorType]
+  const motorName = motor?.name ?? mechanism.motorType
+  const mechLabel = mechanism.type.charAt(0).toUpperCase() + mechanism.type.slice(1)
+  const now       = new Date().toLocaleString()
+
+  const bestEntry = history.length > 0
+    ? history.reduce((b, e) => e.metrics.score < b.metrics.score ? e : b)
+    : null
+
+  const line = '─'.repeat(64)
+  const header = [
+    `GainLab Test Log`,
+    `Mechanism : ${mechLabel}  |  Motor: ${motorName}`,
+    `Gear Ratio: ${mechanism.gearRatio}:1  |  Motors: ${mechanism.numMotors}`,
+    `Setpoint  : ${nominalSetpoint} ${unitLabel}`,
+    `Experiments: ${history.length}${bestEntry ? `  |  Best Score: ${bestEntry.metrics.score.toFixed(2)} (Test #${bestEntry.testIndex + 1})` : ''}`,
+    `Generated : ${now}`,
+    line,
+  ].join('\n')
+
+  const entries = history.map(entry => {
+    const { gains, metrics, segmentMetrics, steps, testIndex } = entry
+    const isBest = bestEntry?.testIndex === testIndex
+
+    const gainsLine = `  Gains : kP=${gains.kP.toFixed(4)}  kI=${gains.kI.toFixed(4)}  kD=${gains.kD.toFixed(4)}  kS=${gains.kS.toFixed(4)}  kV=${gains.kV.toFixed(4)}  kA=${gains.kA.toFixed(4)}  kG=${gains.kG.toFixed(4)}`
+
+    const stepsLine = `  Steps : ${steps.map(s => `${s.setpointDisplay} ${unitLabel} × ${s.durationS}s`).join('  →  ')}`
+
+    const aggLine = [
+      `  Agg   : Rise=${fmtTime(metrics.riseTimeS)}`,
+      `Over=${fmtPct(metrics.overshootPct)}`,
+      `Settle=${fmtTime(metrics.settlingTimeS)}`,
+      `SSErr=${metrics.steadyStateError.toFixed(3)}`,
+      `Osc=${metrics.oscillations}`,
+      `Score=${metrics.score.toFixed(2)}${isBest ? ' ★ BEST' : ''}`,
+    ].join('  ')
+
+    const segLines = segmentMetrics.length > 1
+      ? segmentMetrics.map((seg, i) => {
+          const sp   = steps[i]?.setpointDisplay ?? '?'
+          const prev = i > 0 ? (steps[i - 1]?.setpointDisplay ?? 0) : 0
+          const dir  = i === 0 || sp > prev ? '↑' : '↓'
+          return [
+            `  Seg ${i + 1} (${sp} ${unitLabel} ${dir}):`,
+            `Rise=${fmtTime(seg.riseTimeS)}`,
+            `Over=${fmtPct(seg.overshootPct)}`,
+            `Settle=${fmtTime(seg.settlingTimeS)}`,
+            `SSErr=${seg.steadyStateError.toFixed(3)}`,
+            `Osc=${seg.oscillations}`,
+            `Score=${seg.score.toFixed(2)}`,
+          ].join('  ')
+        })
+      : []
+
+    return [`Test #${testIndex + 1}`, gainsLine, stepsLine, ...segLines, aggLine].join('\n')
+  })
+
+  const best = bestEntry ? [
+    line,
+    `★ BEST GAINS (Test #${bestEntry.testIndex + 1}  Score: ${bestEntry.metrics.score.toFixed(2)})`,
+    `  kP=${bestEntry.gains.kP.toFixed(4)}  kI=${bestEntry.gains.kI.toFixed(4)}  kD=${bestEntry.gains.kD.toFixed(4)}`,
+    `  kS=${bestEntry.gains.kS.toFixed(4)}  kV=${bestEntry.gains.kV.toFixed(4)}  kA=${bestEntry.gains.kA.toFixed(4)}  kG=${bestEntry.gains.kG.toFixed(4)}`,
+  ].join('\n') : ''
+
+  return [header, ...entries.map(e => e + '\n'), best].join('\n')
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export default function GainsPanel({
-  gains, metrics, mechanismType, testCount, isRunning,
+  gains, metrics, mechanism, nominalSetpoint, testCount, isRunning,
   phaseInfo, history, onGainsChange, onRunTest, onSuggest, onExport
 }: Props): JSX.Element {
 
-  const showKG = mechanismType === 'arm' || mechanismType === 'elevator'
+  const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle')
+
+  const showKG = mechanism.type === 'arm' || mechanism.type === 'elevator'
   const visibleGains = GAIN_DEFS.filter(g => g.key !== 'kG' || showKG)
 
   function setGain(key: keyof Gains, val: string): void {
@@ -54,6 +141,15 @@ export default function GainsPanel({
     : null
 
   const isStructured = phaseInfo.phase === 'structured'
+
+  function copyLog(): void {
+    if (history.length === 0) return
+    const log = buildLog(history, mechanism, nominalSetpoint)
+    navigator.clipboard.writeText(log).then(() => {
+      setCopyState('copied')
+      setTimeout(() => setCopyState('idle'), 2000)
+    }).catch(() => {})
+  }
 
   return (
     <div className="gains-panel">
@@ -102,23 +198,13 @@ export default function GainsPanel({
       <div className="section-label">Results</div>
       {metrics ? (
         <div className="metrics-list">
-          <MetricRow label="Rise Time"
-            value={metrics.riseTimeS < 0 ? '—' : metrics.riseTimeS < 1
-              ? (metrics.riseTimeS * 1000).toFixed(0) + ' ms'
-              : metrics.riseTimeS.toFixed(3) + ' s'}
-          />
-          <MetricRow label="Overshoot"
-            value={metrics.overshootPct.toFixed(1) + ' %'}
+          <MetricRow label="Rise Time"     value={fmtTime(metrics.riseTimeS)} />
+          <MetricRow label="Overshoot"     value={fmtPct(metrics.overshootPct)}
             color={metrics.overshootPct > 10 ? 'var(--error)' : metrics.overshootPct > 5 ? 'var(--gold-bright)' : 'var(--success)'}
           />
-          <MetricRow label="Settling"
-            value={metrics.settlingTimeS < 0 ? '—' : metrics.settlingTimeS < 1
-              ? (metrics.settlingTimeS * 1000).toFixed(0) + ' ms'
-              : metrics.settlingTimeS.toFixed(3) + ' s'}
-          />
-          <MetricRow label="SS Error" value={metrics.steadyStateError.toFixed(4)} />
-          <MetricRow
-            label="Oscillations"
+          <MetricRow label="Settling"      value={fmtTime(metrics.settlingTimeS)} />
+          <MetricRow label="SS Error"      value={metrics.steadyStateError.toFixed(4)} />
+          <MetricRow label="Oscillations"
             value={metrics.oscillations === 0 ? 'None' : `${metrics.oscillations} crossing${metrics.oscillations !== 1 ? 's' : ''}`}
             color={oscColor(metrics.oscillations)}
           />
@@ -143,11 +229,7 @@ export default function GainsPanel({
           onClick={onRunTest}
           disabled={isRunning}
         >
-          {isRunning ? (
-            <><span className="spinner" /> Running…</>
-          ) : (
-            <>▶ Run Test</>
-          )}
+          {isRunning ? <><span className="spinner" /> Running…</> : <>▶ Run Test</>}
         </button>
 
         <button
@@ -174,7 +256,16 @@ export default function GainsPanel({
       {history.length > 0 && (
         <>
           <div className="section-divider" />
-          <div className="section-label">History</div>
+          <div className="section-label-row">
+            <span className="section-label" style={{ marginBottom: 0 }}>History</span>
+            <button
+              className={`btn-log-copy ${copyState === 'copied' ? 'copied' : ''}`}
+              onClick={copyLog}
+              title="Copy full test log to clipboard"
+            >
+              {copyState === 'copied' ? '✓ Copied' : '⎘ Copy Log'}
+            </button>
+          </div>
           <div className="history-list">
             {[...history].reverse().slice(0, 8).map((entry, i) => {
               const isBest = bestEntry && entry.metrics.score === bestEntry.metrics.score
@@ -183,7 +274,7 @@ export default function GainsPanel({
                   key={entry.testIndex}
                   className={`history-entry ${isBest ? 'best' : ''}`}
                   onClick={() => onGainsChange(entry.gains)}
-                  title="Click to restore these gains"
+                  title={`Test #${entry.testIndex + 1} — ${entry.steps.length} step${entry.steps.length !== 1 ? 's' : ''}. Click to restore gains.`}
                 >
                   <span className="history-index">#{history.length - i}</span>
                   <div className="history-bar-wrap">
@@ -192,6 +283,9 @@ export default function GainsPanel({
                       style={{ width: `${Math.max(4, 100 - entry.metrics.score * 3)}%` }}
                     />
                   </div>
+                  <span className="history-osc" style={{ color: oscColor(entry.metrics.oscillations) }}>
+                    {entry.metrics.oscillations > 0 ? `~${entry.metrics.oscillations}` : '○'}
+                  </span>
                   <span className="history-score" style={{ color: scoreColor(entry.metrics.score) }}>
                     {entry.metrics.score.toFixed(1)}
                   </span>

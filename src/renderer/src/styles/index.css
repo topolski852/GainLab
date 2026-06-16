@@ -962,6 +962,48 @@ body::before {
 ::-webkit-scrollbar-thumb      { background: var(--border-accent); }
 ::-webkit-scrollbar-thumb:hover{ background: var(--border-normal); }
 
+/* ── Section label row (label + inline button) ────────────────────────────────── */
+.section-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.btn-log-copy {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid var(--border-accent);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.btn-log-copy:hover {
+  color: var(--blue-bright);
+  border-color: var(--blue-bright);
+  background: var(--blue-glow);
+}
+
+.btn-log-copy.copied {
+  color: var(--success);
+  border-color: var(--success);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+/* oscillation indicator in history row */
+.history-osc {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
 /* ── Phase indicator ─────────────────────────────────────────────────────────── */
 .phase-indicator {
   padding: 8px 10px;
