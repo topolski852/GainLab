@@ -1,4 +1,4 @@
-import { Gains, GainBounds, OptimizerEntry, PhaseInfo } from '../types'
+import { Gains, GainBounds, OptimizerEntry, PhaseInfo, MechanismType } from '../types'
 
 // ─── Gaussian Process ─────────────────────────────────────────────────────────
 // Squared-exponential (RBF) kernel, Cholesky-based exact inference.
@@ -108,15 +108,29 @@ const STRUCTURED_KP    = [0.001, 0.01, 0.05, 0.2, 0.5, 1.5, 5.0]
 
 // ─── Gain space normalization ─────────────────────────────────────────────────
 
-export function defaultBounds(hasGravity: boolean): GainBounds {
+export function defaultBounds(mechType: MechanismType): GainBounds {
+  // Velocity control (flywheel): tight kD/kI — derivative action fights motor in
+  // a velocity loop (kA already handles acceleration), high kI causes windup.
+  if (mechType === 'flywheel') {
+    return {
+      kP: { min: 0.001, max: 5    },  // kP=10 causes 100+ oscillations; cap at 5
+      kI: { min: 0,     max: 0.05 },  // tiny — rarely needed, windup risk
+      kD: { min: 0,     max: 0.1  },  // small — kA does the heavy lifting
+      kS: { min: 0,     max: 1    },
+      kV: { min: 0,     max: 0.5  },
+      kA: { min: 0,     max: 0.5  },
+      kG: { min: 0,     max: 0    },  // no gravity term for velocity control
+    }
+  }
+  // Position control (arm / elevator): kD needed for damping, kG for gravity.
   return {
     kP: { min: 0.001, max: 10  },
-    kI: { min: 0,     max: 1   },
+    kI: { min: 0,     max: 0.5 },
     kD: { min: 0,     max: 1   },
     kS: { min: 0,     max: 1   },
     kV: { min: 0,     max: 0.5 },
     kA: { min: 0,     max: 0.5 },
-    kG: hasGravity ? { min: 0, max: 2 } : { min: 0, max: 0 }
+    kG: mechType !== 'flywheel' ? { min: 0, max: 2 } : { min: 0, max: 0 },
   }
 }
 

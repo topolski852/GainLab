@@ -43,8 +43,7 @@ export default function App(): JSX.Element {
 
   // Rebuild optimizer when mechanism config changes
   useEffect(() => {
-    const hasGravity = mechanism.type === 'arm' || mechanism.type === 'elevator'
-    optimizerRef.current = new BayesianOptimizer(defaultBounds(hasGravity))
+    optimizerRef.current = new BayesianOptimizer(defaultBounds(mechanism.type))
     setHistory([])
     setTestCount(0)
     setStepData([])
@@ -80,6 +79,15 @@ export default function App(): JSX.Element {
       setHistory(prev => [...prev, entry])
       setTestCount(prev => prev + 1)
       optimizerRef.current?.observe(entry)
+
+      // Auto-suggest next gains so repeated "Run Test" clicks try different values.
+      // In simulation there's no variability — re-running the same gains is pointless.
+      if (optimizerRef.current) {
+        const bl = calculateBaselineGains(mechanism)
+        const nextGains = optimizerRef.current.suggest({ kV: bl.kV, kG: bl.kG, kA: bl.kA })
+        setGains(nextGains)
+      }
+
       setIsRunning(false)
     }, 0)
   }, [mechanism, gains, setpointDisplay, isRunning, testCount])

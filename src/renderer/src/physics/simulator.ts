@@ -402,84 +402,92 @@ function aggregateMetrics(segs: StepMetrics[], steps: TestStep[], mechType: Mech
 
 // ─── Progressive test sequences ───────────────────────────────────────────────
 
+// Round a setpoint to a clean display value (avoids 1650.0000000000002 RPM)
+function sp(v: number, mechType: MechanismType): number {
+  if (mechType === 'flywheel') return Math.round(v)          // nearest RPM
+  if (mechType === 'arm')      return Math.round(v * 10) / 10 // 0.1°
+  return Math.round(v * 100) / 100                            // 0.01 m
+}
+
 export function getTestSequence(
   mechType: MechanismType,
   nominalSetpoint: number,
   expCount: number
 ): TestStep[] {
   const s = nominalSetpoint
+  const S = (v: number) => sp(v, mechType)
 
   if (mechType === 'flywheel') {
     if (expCount < 3) return [
-      { setpointDisplay: s,          durationS: 2.0 }
+      { setpointDisplay: S(s),          durationS: 2.0 }
     ]
     if (expCount < 8) return [
-      { setpointDisplay: s * 0.5,   durationS: 1.0 },
-      { setpointDisplay: s,          durationS: 2.0 },
+      { setpointDisplay: S(s * 0.5),   durationS: 1.0 },
+      { setpointDisplay: S(s),          durationS: 2.0 },
     ]
     if (expCount < 15) return [
-      { setpointDisplay: s * 0.25,  durationS: 0.8 },
-      { setpointDisplay: s,          durationS: 1.5 },
-      { setpointDisplay: s * 0.6,   durationS: 1.0 },
-      { setpointDisplay: s,          durationS: 1.5 },
+      { setpointDisplay: S(s * 0.25),  durationS: 0.8 },
+      { setpointDisplay: S(s),          durationS: 1.5 },
+      { setpointDisplay: S(s * 0.6),   durationS: 1.0 },
+      { setpointDisplay: S(s),          durationS: 1.5 },
     ]
     return [
-      { setpointDisplay: s * 0.25,  durationS: 0.8 },
-      { setpointDisplay: s * 0.75,  durationS: 1.0 },
-      { setpointDisplay: s * 0.4,   durationS: 0.7 },
-      { setpointDisplay: s,          durationS: 1.5 },
-      { setpointDisplay: s * 0.55,  durationS: 0.8 },
-      { setpointDisplay: s,          durationS: 1.5 },
+      { setpointDisplay: S(s * 0.25),  durationS: 0.8 },
+      { setpointDisplay: S(s * 0.75),  durationS: 1.0 },
+      { setpointDisplay: S(s * 0.4),   durationS: 0.7 },
+      { setpointDisplay: S(s),          durationS: 1.5 },
+      { setpointDisplay: S(s * 0.55),  durationS: 0.8 },
+      { setpointDisplay: S(s),          durationS: 1.5 },
     ]
   }
 
   if (mechType === 'arm') {
-    const low = Math.max(0, s * 0.05)
+    const low = S(Math.max(0, s * 0.05))
     if (expCount < 3) return [
-      { setpointDisplay: s,          durationS: 2.0 }
+      { setpointDisplay: S(s),          durationS: 2.0 }
     ]
     if (expCount < 8) return [
-      { setpointDisplay: s,          durationS: 1.5 },
-      { setpointDisplay: low,        durationS: 1.0 },
+      { setpointDisplay: S(s),          durationS: 1.5 },
+      { setpointDisplay: low,           durationS: 1.0 },
     ]
     if (expCount < 15) return [
-      { setpointDisplay: s * 0.5,   durationS: 1.0 },
-      { setpointDisplay: s,          durationS: 1.5 },
-      { setpointDisplay: low,        durationS: 1.0 },
-      { setpointDisplay: s,          durationS: 1.5 },
+      { setpointDisplay: S(s * 0.5),   durationS: 1.0 },
+      { setpointDisplay: S(s),          durationS: 1.5 },
+      { setpointDisplay: low,           durationS: 1.0 },
+      { setpointDisplay: S(s),          durationS: 1.5 },
     ]
     return [
-      { setpointDisplay: s * 0.3,   durationS: 0.8 },
-      { setpointDisplay: s * 0.8,   durationS: 1.0 },
-      { setpointDisplay: low,        durationS: 0.8 },
-      { setpointDisplay: s * 0.6,   durationS: 1.0 },
-      { setpointDisplay: s,          durationS: 1.5 },
-      { setpointDisplay: low,        durationS: 0.8 },
+      { setpointDisplay: S(s * 0.3),   durationS: 0.8 },
+      { setpointDisplay: S(s * 0.8),   durationS: 1.0 },
+      { setpointDisplay: low,           durationS: 0.8 },
+      { setpointDisplay: S(s * 0.6),   durationS: 1.0 },
+      { setpointDisplay: S(s),          durationS: 1.5 },
+      { setpointDisplay: low,           durationS: 0.8 },
     ]
   }
 
   // elevator
-  const low = s * 0.05
+  const low = S(s * 0.05)
   if (expCount < 3) return [
-    { setpointDisplay: s,            durationS: 2.0 }
+    { setpointDisplay: S(s),            durationS: 2.0 }
   ]
   if (expCount < 8) return [
-    { setpointDisplay: s,            durationS: 1.5 },
-    { setpointDisplay: low,          durationS: 1.0 },
+    { setpointDisplay: S(s),            durationS: 1.5 },
+    { setpointDisplay: low,             durationS: 1.0 },
   ]
   if (expCount < 15) return [
-    { setpointDisplay: s * 0.5,     durationS: 1.0 },
-    { setpointDisplay: s,            durationS: 1.5 },
-    { setpointDisplay: low,          durationS: 1.0 },
-    { setpointDisplay: s,            durationS: 1.5 },
+    { setpointDisplay: S(s * 0.5),     durationS: 1.0 },
+    { setpointDisplay: S(s),            durationS: 1.5 },
+    { setpointDisplay: low,             durationS: 1.0 },
+    { setpointDisplay: S(s),            durationS: 1.5 },
   ]
   return [
-    { setpointDisplay: s * 0.2,     durationS: 0.8 },
-    { setpointDisplay: s * 0.8,     durationS: 1.0 },
-    { setpointDisplay: low,          durationS: 0.8 },
-    { setpointDisplay: s * 0.5,     durationS: 1.0 },
-    { setpointDisplay: s,            durationS: 1.5 },
-    { setpointDisplay: low,          durationS: 0.8 },
+    { setpointDisplay: S(s * 0.2),     durationS: 0.8 },
+    { setpointDisplay: S(s * 0.8),     durationS: 1.0 },
+    { setpointDisplay: low,             durationS: 0.8 },
+    { setpointDisplay: S(s * 0.5),     durationS: 1.0 },
+    { setpointDisplay: S(s),            durationS: 1.5 },
+    { setpointDisplay: low,             durationS: 0.8 },
   ]
 }
 
