@@ -118,17 +118,21 @@ const POSITION_KP_SWEEP  = [0.001, 0.01, 0.05, 0.2, 0.8, 3.0, 8.0]
 // ─── Gain space normalization ─────────────────────────────────────────────────
 
 export function defaultBounds(mechType: MechanismType): GainBounds {
-  // Velocity control (flywheel): tight kD/kI — derivative action fights motor in
-  // a velocity loop (kA already handles acceleration), high kI causes windup.
+  // Velocity control (flywheel): kD MUST be 0 — differentiating velocity error
+  // produces a massive voltage spike at every setpoint change (kD × Δerror/dt_pid),
+  // which brakes the motor hard and makes the system appear to stall. kA handles
+  // acceleration feedforward; kD has no useful role in a velocity loop.
+  // kS max = 0.5V: with a well-tuned kV, kS > ~0.3V fights the feedforward and
+  // creates steady-state error rather than fixing it.
   if (mechType === 'flywheel') {
     return {
-      kP: { min: 0.001, max: 5    },  // kP=10 causes 100+ oscillations; cap at 5
-      kI: { min: 0,     max: 0.05 },  // tiny — rarely needed, windup risk
-      kD: { min: 0,     max: 0.1  },  // small — kA does the heavy lifting
-      kS: { min: 0,     max: 1    },
+      kP: { min: 0.001, max: 5    },
+      kI: { min: 0,     max: 0.05 },
+      kD: { min: 0,     max: 0    },  // zero: derivative kickback destroys velocity loops
+      kS: { min: 0,     max: 0.5  },  // low: kV feedforward covers steady-state
       kV: { min: 0,     max: 0.5  },
       kA: { min: 0,     max: 0.5  },
-      kG: { min: 0,     max: 0    },  // no gravity term for velocity control
+      kG: { min: 0,     max: 0    },
     }
   }
   // Position control (arm / elevator): kD needed for damping, kG for gravity.
@@ -208,7 +212,7 @@ export class BayesianOptimizer {
         kP: this.kpSweep[n],
         kI: 0,
         kD: 0,
-        kS: 0.25,
+        kS: 0,       // kV feedforward handles steady state; kS=0.25 fights it
         kV: 0,
         kA: 0,
         kG: 0,

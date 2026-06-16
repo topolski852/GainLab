@@ -243,8 +243,12 @@ function calculateMetrics(
     return { riseTimeS: -1, overshootPct: 0, settlingTimeS: -1, steadyStateError: 0, oscillations: 0, score: 999 }
   }
 
+  // Segment start time — all time measurements are RELATIVE to this so that
+  // later segments in a multi-step run are scored the same as earlier ones.
+  const segStartTime = points[0].time
+
   const startActual = points[0].actual
-  const isRampUp    = setpoint >= startActual  // false when setpoint is below current position
+  const isRampUp    = setpoint >= startActual
 
   // 10% and 90% thresholds relative to where we started, not from zero
   const delta      = setpoint - startActual
@@ -254,7 +258,7 @@ function calculateMetrics(
 
   let rise10 = -1, rise90 = -1
   let maxActual = -Infinity, minActual = Infinity
-  let settlingTime = -1
+  let settlingTimeAbs = -1
 
   for (const pt of points) {
     if (pt.actual > maxActual) maxActual = pt.actual
@@ -271,18 +275,24 @@ function calculateMetrics(
 
   for (let i = points.length - 1; i >= 0; i--) {
     if (Math.abs(points[i].actual - setpoint) > band) {
-      settlingTime = i + 1 < points.length ? points[i + 1].time : points[i].time
+      settlingTimeAbs = i + 1 < points.length ? points[i + 1].time : points[i].time
       break
     }
   }
-  if (settlingTime < 0) settlingTime = 0
+  // Convert absolute time to time-within-segment. A value of 0 means the system
+  // was always within the settling band (settled before the first sample).
+  const settlingTime = settlingTimeAbs < 0
+    ? 0
+    : Math.max(0, settlingTimeAbs - segStartTime)
 
+  // riseTimeS is already relative: rise90 - rise10 are both absolute timestamps
+  // so their difference is automatically a duration.
   const riseTimeS = rise90 >= 0 && rise10 >= 0 ? rise90 - rise10 : -1
 
   // Direction-aware overshoot: how far did we blow past the setpoint?
   const overshootPct = isRampUp
-    ? Math.max(0, (maxActual - setpoint) / Math.abs(setpoint) * 100)  // went above target
-    : Math.max(0, (setpoint - minActual) / Math.abs(setpoint) * 100)  // went below target
+    ? Math.max(0, (maxActual - setpoint) / Math.abs(setpoint) * 100)
+    : Math.max(0, (setpoint - minActual) / Math.abs(setpoint) * 100)
 
   const oscillations = countOscillations(points, setpoint)
 
