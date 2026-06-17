@@ -1,7 +1,10 @@
 // ─── Mechanism ────────────────────────────────────────────────────────────────
 
-export type MechanismType = 'flywheel' | 'arm' | 'elevator'
+export type MechanismType = 'flywheel' | 'roller' | 'arm' | 'elevator'
 export type MotorType = 'falcon500' | 'krakenX60' | 'krakenX60Trap' | 'krakenX44' | 'krakenX44Trap' | 'minion'
+export type GravityType = 'NONE' | 'COSINE' | 'CONSTANT'
+export type FeedbackSource = 'RotorSensor' | 'RemoteCANcoder' | 'FusedCANcoder' | 'SyncCANcoder'
+export type LimitType = 'NormallyOpen' | 'NormallyClosed'
 
 export interface MechanismConfig {
   type: MechanismType
@@ -128,6 +131,7 @@ export function defaultAutoTuneConfig(nominalSetpoint?: number): AutoTuneConfig 
 
 export type ConnectionMode = 'sim' | 'live'
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
+export type ControlMode = 'VELOCITY' | 'POSITION' | 'TORQUE' | 'DUTY_CYCLE' | 'MOTION_MAGIC'
 
 export interface NT4Config {
   teamNumber: string
@@ -149,4 +153,169 @@ export interface AppState {
   nt4Config: NT4Config
   isRunning: boolean
   testCount: number
+}
+
+// ─── Named Setpoints ──────────────────────────────────────────────────────────
+
+export interface NamedSetpoint {
+  id: string
+  name: string    // e.g. "IDLE_SPEED", "DEPLOYED_ANGLE" — becomes a Java constant
+  value: number   // in display units (RPM / deg / m)
+}
+
+// ─── Motor Profile ────────────────────────────────────────────────────────────
+
+export interface MotorProfile {
+  // Identity
+  id: string
+  name: string
+  description: string
+  canId: number
+
+  // Control
+  controlMode: ControlMode
+  slotNumber: number
+  inverted: boolean
+
+  // Physics sim
+  mechanism: MechanismConfig
+  gains: Gains
+  gravityType: GravityType
+
+  // Operating range (constrain auto-tune experiments)
+  nominalSetpoint: number
+  minSetpoint: number
+  maxSetpoint: number
+
+  // Named setpoints (used in Phase 6 + exported as Java constants)
+  namedSetpoints: NamedSetpoint[]
+
+  // Voltage limits
+  peakForwardVoltage: number
+  peakReverseVoltage: number
+
+  // Current limits
+  statorCurrentLimit: number
+  supplyCurrentLimit: number
+  peakForwardTorqueCurrent: number
+  peakReverseTorqueCurrent: number
+
+  // Feedback sensor
+  feedbackSource: FeedbackSource
+  feedbackRemoteSensorId: number
+  rotorToSensorRatio: number
+  sensorToMechanismRatio: number
+  rotorOffset: number
+
+  // Hardware limit switches
+  forwardLimitEnable: boolean
+  forwardLimitAutosetEnable: boolean
+  forwardLimitAutosetValue: number
+  forwardLimitType: LimitType
+  reverseLimitEnable: boolean
+  reverseLimitAutosetEnable: boolean
+  reverseLimitAutosetValue: number
+  reverseLimitType: LimitType
+
+  // Stall detection
+  stallCurrentThreshold: number
+  stallVelocityThreshold: number
+  stallTimeSeconds: number
+
+  // Behavior
+  brakeMode: boolean
+  continuousWrap: boolean
+  simVelocityRps: number
+
+  // Tune status (set by auto-tuner when bestScore <= targetScore)
+  tuneStatus: 'none' | 'tuned'
+  tuneBestScore: number | null
+  tuneTargetScore: number | null
+  tuneDate: string | null
+}
+
+export interface Project {
+  id: string
+  name: string
+  description: string
+  createdAt: string
+  updatedAt: string
+  motors: MotorProfile[]
+}
+
+export interface RecentProject {
+  filePath: string
+  name: string
+  motorCount: number
+  updatedAt: string
+}
+
+export function defaultMotorProfile(name = 'New Motor'): MotorProfile {
+  return {
+    id: crypto.randomUUID(),
+    name,
+    description: '',
+    canId: 1,
+    controlMode: 'VELOCITY',
+    slotNumber: 0,
+    inverted: false,
+    mechanism: {
+      type: 'flywheel',
+      motorType: 'krakenX60',
+      numMotors: 1,
+      gearRatio: 1,
+      massKg: 0.5,
+      radiusM: 0.1,
+      lengthM: 0.5,
+      startAngleDeg: 0,
+      spoolRadiusM: 0.0254,
+      startHeightM: 0,
+    },
+    gains: { kP: 0, kI: 0, kD: 0, kS: 0, kV: 0, kA: 0, kG: 0 },
+    gravityType: 'NONE',
+    nominalSetpoint: 4000,
+    minSetpoint: 0,
+    maxSetpoint: 6000,
+    namedSetpoints: [],
+    peakForwardVoltage: 12,
+    peakReverseVoltage: -12,
+    statorCurrentLimit: 120,
+    supplyCurrentLimit: 70,
+    peakForwardTorqueCurrent: 800,
+    peakReverseTorqueCurrent: -800,
+    feedbackSource: 'RotorSensor',
+    feedbackRemoteSensorId: 0,
+    rotorToSensorRatio: 1,
+    sensorToMechanismRatio: 1,
+    rotorOffset: 0,
+    forwardLimitEnable: false,
+    forwardLimitAutosetEnable: false,
+    forwardLimitAutosetValue: 0,
+    forwardLimitType: 'NormallyOpen',
+    reverseLimitEnable: false,
+    reverseLimitAutosetEnable: false,
+    reverseLimitAutosetValue: 0,
+    reverseLimitType: 'NormallyOpen',
+    stallCurrentThreshold: 60,
+    stallVelocityThreshold: 0.2,
+    stallTimeSeconds: 0.25,
+    brakeMode: false,
+    continuousWrap: false,
+    simVelocityRps: 0,
+    tuneStatus: 'none',
+    tuneBestScore: null,
+    tuneTargetScore: null,
+    tuneDate: null,
+  }
+}
+
+export function defaultProject(name: string): Project {
+  return {
+    id: crypto.randomUUID(),
+    name,
+    description: '',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    motors: [],
+  }
 }

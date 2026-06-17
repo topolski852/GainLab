@@ -6,26 +6,34 @@ const PID_DT     = 0.020
 const SUPPLY_V   = 12.0
 const GRAVITY    = 9.81
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// Flywheel and roller share the same physics model (spinning wheel, J = ½mr²,
+// velocity control in RPM). The only difference is inertia — rollers are lighter.
+function isRotary(type: MechanismType): boolean {
+  return type === 'flywheel' || type === 'roller'
+}
+
 // ─── Unit conversions ─────────────────────────────────────────────────────────
 // Simulation state is always SI (rad/s, rad, m/s, m).
 // Gains live in CTRE Phoenix 6 rotor units (RPS, rotations).
 // Display units are natural (RPM, deg, m) for readability.
 
 function displayToSI(v: number, cfg: MechanismConfig): number {
-  if (cfg.type === 'flywheel') return v * 2 * Math.PI / (60 * cfg.gearRatio)  // RPM → mech rad/s
-  if (cfg.type === 'arm')      return v * Math.PI / 180                         // deg → rad
-  return v                                                                       // elevator: m
+  if (isRotary(cfg.type)) return v * 2 * Math.PI / (60 * cfg.gearRatio)  // RPM → mech rad/s
+  if (cfg.type === 'arm')  return v * Math.PI / 180                        // deg → rad
+  return v                                                                  // elevator: m
 }
 
 function siToDisplay(v: number, cfg: MechanismConfig): number {
-  if (cfg.type === 'flywheel') return v * cfg.gearRatio * 60 / (2 * Math.PI)  // mech rad/s → RPM
-  if (cfg.type === 'arm')      return v * 180 / Math.PI                         // rad → deg
+  if (isRotary(cfg.type)) return v * cfg.gearRatio * 60 / (2 * Math.PI)  // mech rad/s → RPM
+  if (cfg.type === 'arm')  return v * 180 / Math.PI                        // rad → deg
   return v
 }
 
 function siToCTRE(v: number, cfg: MechanismConfig): number {
-  if (cfg.type === 'flywheel') return v * cfg.gearRatio / (2 * Math.PI)
-  if (cfg.type === 'arm')      return v * cfg.gearRatio / (2 * Math.PI)
+  if (isRotary(cfg.type)) return v * cfg.gearRatio / (2 * Math.PI)
+  if (cfg.type === 'arm')  return v * cfg.gearRatio / (2 * Math.PI)
   return v * cfg.gearRatio / (2 * Math.PI * cfg.spoolRadiusM)
 }
 
@@ -36,8 +44,8 @@ function displayToCTRE(v: number, cfg: MechanismConfig): number {
 // ─── Physics state ────────────────────────────────────────────────────────────
 
 interface PhysicsState {
-  omega_mech: number   // rad/s at mechanism (flywheel velocity; arm/elevator angular rate)
-  theta_mech: number   // rad (arm position; unused for flywheel)
+  omega_mech: number   // rad/s at mechanism (rotary velocity; arm/elevator angular rate)
+  theta_mech: number   // rad (arm position; unused for rotary)
   v_elev:     number   // m/s (elevator only)
   y_elev:     number   // m   (elevator only)
 }
@@ -54,16 +62,17 @@ function defaultPhysicsState(cfg: MechanismConfig): PhysicsState {
 // ─── Effective inertia at mechanism output ────────────────────────────────────
 
 function effectiveInertia(cfg: MechanismConfig): number {
-  const motor = MOTORS[cfg.motorType]
+  const motor  = MOTORS[cfg.motorType]
   const J_motor = cfg.numMotors * motor.rotorInertiaKgM2 * cfg.gearRatio ** 2
 
-  if (cfg.type === 'flywheel') {
+  if (isRotary(cfg.type)) {
+    // Both flywheel and roller: solid disk/cylinder approximation J = ½mr²
     return 0.5 * cfg.massKg * cfg.radiusM ** 2 + J_motor
   }
   if (cfg.type === 'arm') {
     return (1 / 3) * cfg.massKg * cfg.lengthM ** 2 + J_motor
   }
-  // elevator: linear (kg), motor inertia reflected through spool
+  // elevator: linear mass + motor inertia reflected through spool
   return cfg.massKg + J_motor / cfg.spoolRadiusM ** 2
 }
 
@@ -84,13 +93,9 @@ function runStep(
 
   let { omega_mech, theta_mech, v_elev, y_elev } = initPhysics
 
-  // Seed prevError from the actual initial state so the derivative term sees no
-  // false spike on the first PID tick. Initialize pidTimer to PID_DT so the PID
-  // fires on the very first physics step — otherwise voltage stays 0 for 20ms and
-  // back-EMF decelerates the motor, producing the downward spike visible in the graph.
   const initActualCTRE = siToCTRE(
-    cfg.type === 'flywheel' ? omega_mech :
-    cfg.type === 'arm'      ? theta_mech : y_elev,
+    isRotary(cfg.type) ? omega_mech :
+    cfg.type === 'arm' ? theta_mech : y_elev,
     cfg
   )
   let integral  = 0
@@ -105,7 +110,7 @@ function runStep(
   for (let t = 0; t <= durationS + PHYSICS_DT * 0.5; t += PHYSICS_DT) {
     // PID update (20 ms)
     if (pidTimer >= PID_DT - PHYSICS_DT * 0.5) {
-      const actualCTRE = cfg.type === 'flywheel'
+      const actualCTRE = isRotary(cfg.type)
         ? siToCTRE(omega_mech, cfg)
         : cfg.type === 'arm'
           ? siToCTRE(theta_mech, cfg)
@@ -114,12 +119,35 @@ function runStep(
       const error  = setpointCTRE - actualCTRE
       integral    += error * PID_DT
       integral     = Math.max(-50, Math.min(50, integral))
-      const deriv  = (error - prevError) / PID_DT
+
+      // For position-controlled mechanisms, derive from actual velocity instead of
+      // error finite-difference. The 20ms sample rate makes finite-diff kD numerically
+      // unstable at high gear ratios (kD_max ≈ J×R / (Kt×n×G²×T) ≈ 0.02 for G=100).
+      // Velocity-based kD is how Phoenix 6 applies it internally (measurement-on-output).
+      let deriv: number
+      if (cfg.type === 'arm') {
+        deriv = -omega_mech * cfg.gearRatio / (2 * Math.PI)
+      } else if (cfg.type === 'elevator') {
+        deriv = -v_elev * cfg.gearRatio / (2 * Math.PI * cfg.spoolRadiusM)
+      } else {
+        deriv = (error - prevError) / PID_DT
+      }
       prevError    = error
 
-      let ff = gains.kS * Math.sign(setpointCTRE) + gains.kV * setpointCTRE
-      if (cfg.type === 'arm')      ff += gains.kG * Math.cos(theta_mech)
-      if (cfg.type === 'elevator') ff += gains.kG
+      // For position-controlled mechanisms (arm/elevator), kS and kV are velocity-based
+      // feedforwards (Phoenix 6 PositionVoltage uses motion-profile velocity/accel for
+      // these terms — 0 for a static setpoint). Use actual mechanism velocity so they
+      // contribute during the move and decay to 0 at steady state, matching hardware.
+      let ff: number
+      if (cfg.type === 'arm') {
+        const velCTRE = omega_mech * cfg.gearRatio / (2 * Math.PI)
+        ff = gains.kS * Math.sign(velCTRE) + gains.kV * velCTRE + gains.kG * Math.cos(theta_mech)
+      } else if (cfg.type === 'elevator') {
+        const velCTRE = v_elev * cfg.gearRatio / (2 * Math.PI * cfg.spoolRadiusM)
+        ff = gains.kS * Math.sign(velCTRE) + gains.kV * velCTRE + gains.kG
+      } else {
+        ff = gains.kS * Math.sign(setpointCTRE) + gains.kV * setpointCTRE
+      }
 
       voltage  = gains.kP * error + gains.kI * integral + gains.kD * deriv + ff
       voltage  = Math.max(-SUPPLY_V, Math.min(SUPPLY_V, voltage))
@@ -128,18 +156,17 @@ function runStep(
     pidTimer += PHYSICS_DT
 
     // Motor physics (5 ms)
-    const omega_rotor =
-      cfg.type === 'elevator'
-        ? (v_elev / cfg.spoolRadiusM) * cfg.gearRatio
-        : omega_mech * cfg.gearRatio
+    const omega_rotor = cfg.type === 'elevator'
+      ? (v_elev / cfg.spoolRadiusM) * cfg.gearRatio
+      : omega_mech * cfg.gearRatio
 
-    const v_bemf   = omega_rotor / motor.KvRadPerSecPerVolt
-    const current  = Math.max(-motor.stallCurrentA,
-                       Math.min(motor.stallCurrentA,
-                         (voltage - v_bemf) / motor.resistanceOhms))
-    const tau_per  = current * motor.KtNmPerAmp
+    const v_bemf  = omega_rotor / motor.KvRadPerSecPerVolt
+    const current = Math.max(-motor.stallCurrentA,
+                      Math.min(motor.stallCurrentA,
+                        (voltage - v_bemf) / motor.resistanceOhms))
+    const tau_per = current * motor.KtNmPerAmp
 
-    if (cfg.type === 'flywheel') {
+    if (isRotary(cfg.type)) {
       omega_mech += (tau_per * cfg.numMotors * cfg.gearRatio / J_eff) * PHYSICS_DT
 
     } else if (cfg.type === 'arm') {
@@ -149,18 +176,20 @@ function runStep(
       theta_mech    += omega_mech * PHYSICS_DT
 
     } else {
-      const F_motor  = tau_per * cfg.numMotors * cfg.gearRatio / cfg.spoolRadiusM
-      const accel    = (F_motor - cfg.massKg * GRAVITY) / J_eff
-      v_elev        += accel * PHYSICS_DT
-      y_elev         = Math.max(0, y_elev + v_elev * PHYSICS_DT)
+      const F_motor = tau_per * cfg.numMotors * cfg.gearRatio / cfg.spoolRadiusM
+      const accel   = (F_motor - cfg.massKg * GRAVITY) / J_eff
+      v_elev       += accel * PHYSICS_DT
+      y_elev        = Math.max(0, y_elev + v_elev * PHYSICS_DT)
       if (y_elev === 0 && v_elev < 0) v_elev = 0
     }
 
     // Record at 20 ms
     if (step % RECORD_EVERY === 0) {
-      const actualDisplay =
-        cfg.type === 'flywheel' ? siToDisplay(omega_mech, cfg) :
-        cfg.type === 'arm'      ? siToDisplay(theta_mech, cfg) : y_elev
+      const actualDisplay = isRotary(cfg.type)
+        ? siToDisplay(omega_mech, cfg)
+        : cfg.type === 'arm'
+          ? siToDisplay(theta_mech, cfg)
+          : y_elev
 
       points.push({
         time:     parseFloat((timeOffset + t).toFixed(3)),
@@ -171,8 +200,6 @@ function runStep(
     step++
   }
 
-  // Supress the free-speed warning — freeSpeedRadps is only used via the
-  // motor model and not referenced explicitly here.
   void freeSpeedRadps
 
   const metrics = calculateMetrics(points, setpointDisplay, cfg.type)
@@ -187,7 +214,7 @@ function runStep(
 
 export interface MultiStepResult {
   points:              StepResponsePoint[]
-  segmentBoundaries:   number[]      // time values where setpoint changes
+  segmentBoundaries:   number[]
   segmentMetrics:      StepMetrics[]
   aggregateMetrics:    StepMetrics
 }
@@ -202,11 +229,11 @@ export function runMultiStepSimulation(
     return { points: [], segmentBoundaries: [], segmentMetrics: [], aggregateMetrics: empty }
   }
 
-  let physics            = defaultPhysicsState(cfg)
-  let timeOffset         = 0
-  const allPoints:       StepResponsePoint[] = []
-  const segBoundaries:   number[]            = []
-  const segMetrics:      StepMetrics[]       = []
+  let physics          = defaultPhysicsState(cfg)
+  let timeOffset       = 0
+  const allPoints:     StepResponsePoint[] = []
+  const segBoundaries: number[]            = []
+  const segMetrics:    StepMetrics[]       = []
 
   for (const step of steps) {
     const { points, finalPhysics, metrics } = runStep(
@@ -215,19 +242,18 @@ export function runMultiStepSimulation(
     allPoints.push(...points)
     segBoundaries.push(timeOffset)
     segMetrics.push(metrics)
-    physics    = { ...finalPhysics, }  // carry state forward (mechanism doesn't reset)
+    physics    = { ...finalPhysics }
     timeOffset += step.durationS
   }
 
   return {
-    points:           allPoints,
+    points:            allPoints,
     segmentBoundaries: segBoundaries,
-    segmentMetrics:   segMetrics,
-    aggregateMetrics: aggregateMetrics(segMetrics, steps, cfg.type)
+    segmentMetrics:    segMetrics,
+    aggregateMetrics:  aggregateMetrics(segMetrics, steps, cfg.type)
   }
 }
 
-// Backward-compat wrapper used by baseline gain calc and live mode scoring
 export function runSimulation(
   cfg: MechanismConfig,
   gains: Gains,
@@ -252,18 +278,17 @@ function calculateMetrics(
     return { riseTimeS: -1, overshootPct: 0, settlingTimeS: -1, steadyStateError: 0, oscillations: 0, score: 999 }
   }
 
-  // Segment start time — all time measurements are RELATIVE to this so that
-  // later segments in a multi-step run are scored the same as earlier ones.
   const segStartTime = points[0].time
+  const startActual  = points[0].actual
+  const isRampUp     = setpoint >= startActual
 
-  const startActual = points[0].actual
-  const isRampUp    = setpoint >= startActual
-
-  // 10% and 90% thresholds relative to where we started, not from zero
-  const delta      = setpoint - startActual
-  const thresh10   = startActual + 0.1 * delta
-  const thresh90   = startActual + 0.9 * delta
-  const band       = 0.02 * Math.abs(setpoint)
+  const delta    = setpoint - startActual
+  const thresh10 = startActual + 0.1 * delta
+  const thresh90 = startActual + 0.9 * delta
+  // Position mechanisms use a wider settling band: FRC arms/elevators don't need
+  // sub-2% precision to be "settled" — ±5% for arm, ±3% for elevator.
+  const bandFrac  = mechType === 'arm' ? 0.05 : mechType === 'elevator' ? 0.03 : 0.02
+  const band      = bandFrac * Math.abs(setpoint)
 
   let rise10 = -1, rise90 = -1
   let maxActual = -Infinity, minActual = Infinity
@@ -288,17 +313,12 @@ function calculateMetrics(
       break
     }
   }
-  // Convert absolute time to time-within-segment. A value of 0 means the system
-  // was always within the settling band (settled before the first sample).
   const settlingTime = settlingTimeAbs < 0
     ? 0
     : Math.max(0, settlingTimeAbs - segStartTime)
 
-  // riseTimeS is already relative: rise90 - rise10 are both absolute timestamps
-  // so their difference is automatically a duration.
   const riseTimeS = rise90 >= 0 && rise10 >= 0 ? rise90 - rise10 : -1
 
-  // Direction-aware overshoot: how far did we blow past the setpoint?
   const overshootPct = isRampUp
     ? Math.max(0, (maxActual - setpoint) / Math.abs(setpoint) * 100)
     : Math.max(0, (setpoint - minActual) / Math.abs(setpoint) * 100)
@@ -314,7 +334,6 @@ function calculateMetrics(
 }
 
 function countOscillations(points: StepResponsePoint[], setpoint: number): number {
-  // Count error zero-crossings inside the 20% band, after initial approach
   const band   = 0.20 * Math.abs(setpoint)
   let prevSign = 0
   let settled  = false
@@ -322,10 +341,8 @@ function countOscillations(points: StepResponsePoint[], setpoint: number): numbe
 
   for (const pt of points) {
     const err = pt.actual - setpoint
-    // Only start counting once we've gotten within 80% of the setpoint
     if (!settled && Math.abs(err) <= Math.abs(setpoint) * 0.8) settled = true
     if (!settled) continue
-    // Only count crossings inside the 20% band (ignores large transient)
     if (Math.abs(err) > band) { prevSign = 0; continue }
     const sign = Math.sign(err) || prevSign
     if (prevSign !== 0 && sign !== prevSign) crossings++
@@ -344,8 +361,6 @@ function computeScore(
   mechType: MechanismType,
   isRampUp: boolean
 ): number {
-  // One zero-crossing after approach is normal underdamped settling — don't penalise.
-  // Two or more mean the loop is genuinely hunting.
   const oscPenalty =
     oscillations <= 1 ? 0 :
     oscillations === 2 ? 8 :
@@ -355,48 +370,77 @@ function computeScore(
   const ssErrPct = Math.abs(setpoint) > 0 ? (ssError / Math.abs(setpoint)) * 100 : ssError
 
   if (mechType === 'flywheel') {
+    // Flywheel: get to speed fast, hold it. Moderate overshoot is fine.
     if (isRampUp) {
-      // Ramp-up: getting to speed fast is everything. Overshoot is fine up to ~15%.
-      // Not reaching speed (riseTimeS = -1) is the worst possible outcome.
       const rtPenalty = riseTimeS < 0 ? 90 : riseTimeS * 35
       const ovPenalty =
-        overshootPct < 5  ? 0 :                              // free — aggressive is good
-        overshootPct < 15 ? (overshootPct - 5) * 0.4 :      // minor cost
-        4 + (overshootPct - 15) * 2.5                        // too aggressive
+        overshootPct < 5  ? 0 :
+        overshootPct < 15 ? (overshootPct - 5) * 0.4 :
+        4 + (overshootPct - 15) * 2.5
       const stPenalty = settlingTimeS < 0 ? 5 : settlingTimeS * 4
-      const ssPenalty = ssErrPct * 2.5   // must actually hold the speed
+      const ssPenalty = ssErrPct * 2.5
       return oscPenalty + ovPenalty + rtPenalty + stPenalty + ssPenalty
     } else {
-      // Ramp-down: we care that oscillation doesn't happen and speed stabilizes,
-      // but fall time and how far it dips below are low stakes.
       const rtPenalty = riseTimeS < 0 ? 3 : riseTimeS * 2
-      const ovPenalty = overshootPct * 0.3   // dipping below idle speed is mild
+      const ovPenalty = overshootPct * 0.3
       const stPenalty = settlingTimeS < 0 ? 2 : settlingTimeS * 2
       const ssPenalty = ssErrPct * 0.8
       return oscPenalty + ovPenalty + rtPenalty + stPenalty + ssPenalty
     }
   }
 
+  if (mechType === 'roller') {
+    // Roller: consistent speed under varying load matters more than raw ramp speed.
+    // Moderate overshoot is acceptable; steady-state error and oscillation cost more
+    // because a hunting roller loses grip consistency on game pieces.
+    if (isRampUp) {
+      const rtPenalty = riseTimeS < 0 ? 70 : riseTimeS * 25
+      const ovPenalty =
+        overshootPct < 8  ? 0 :
+        overshootPct < 20 ? (overshootPct - 8) * 0.8 :
+        9.6 + (overshootPct - 20) * 3.0
+      const stPenalty = settlingTimeS < 0 ? 8 : settlingTimeS * 6
+      const ssPenalty = ssErrPct * 4.0   // holding speed under game-piece load matters
+      return oscPenalty + ovPenalty + rtPenalty + stPenalty + ssPenalty
+    } else {
+      const rtPenalty = riseTimeS < 0 ? 4 : riseTimeS * 3
+      const ovPenalty = overshootPct * 0.5
+      const stPenalty = settlingTimeS < 0 ? 3 : settlingTimeS * 3
+      const ssPenalty = ssErrPct * 1.5
+      return oscPenalty + ovPenalty + rtPenalty + stPenalty + ssPenalty
+    }
+  }
+
   // ── Position control (arm / elevator) ────────────────────────────────────────
-  // Both directions matter equally. Overshoot is more dangerous (physical stops).
-  // Settling time weighted highest.
+  // Overshoot is dangerous (physical stops) — keep aggressive.
+  // Rise/settle coefficients are gentler than flywheel: a 200ms rise on a 90° arm
+  // move is excellent FRC performance, not a 4-point penalty.
   const ovPenalty =
     overshootPct < 3  ? overshootPct * 0.2 :
     overshootPct < 10 ? 0.6 + (overshootPct - 3) * 2.5 :
     18.1 + (overshootPct - 10) * 5.0
-  const rtPenalty  = riseTimeS < 0 ? 60 : riseTimeS * 20
-  const stPenalty  = settlingTimeS < 0 ? 40 : settlingTimeS * 15
-  const ssPenalty  = ssErrPct * 2.5
+  const rtPenalty = riseTimeS < 0 ? 60 : riseTimeS * 12
+  const stPenalty = settlingTimeS < 0 ? 40 : settlingTimeS * 6
+  // Scale tolerance with setpoint so stow-position noise (0.07° on a 2.25° stow)
+  // stays free while meaningful deploy error (1°+ on a 44°+ move) gets penalized.
+  // Floor (0.2°) protects tiny stow positions; ceiling (0.8°) keeps large setpoints honest.
+  const absTol = mechType === 'arm'
+    ? Math.min(0.8, Math.max(0.2, Math.abs(setpoint) * 0.015))
+    : 0.02
+  const ssErrAdj = Math.max(0, ssError - absTol)
+  const ssErrAdjPct = Math.abs(setpoint) > absTol
+    ? (ssErrAdj / Math.abs(setpoint)) * 100
+    : ssErrAdj * 100
+  const ssPenalty = ssErrAdjPct * 2.5
   return oscPenalty + ovPenalty + rtPenalty + stPenalty + ssPenalty
 }
 
 function aggregateMetrics(segs: StepMetrics[], steps: TestStep[], mechType: MechanismType): StepMetrics {
   if (segs.length === 0) return { riseTimeS: -1, overshootPct: 0, settlingTimeS: -1, steadyStateError: 0, oscillations: 0, score: 999 }
 
-  // For flywheel, ramp-up segments get 3× weight — getting to speed is the primary objective.
-  // The first step (from idle) is always a ramp-up and gets full weight.
+  // For rotary mechanisms (flywheel/roller), ramp-up segments get 3× weight.
   const weights = segs.map((_, i) => {
-    if (mechType !== 'flywheel') return 1
+    if (!isRotary(mechType)) return 1
     if (i === 0) return 3
     return steps[i].setpointDisplay > steps[i - 1].setpointDisplay ? 3 : 1
   })
@@ -404,17 +448,13 @@ function aggregateMetrics(segs: StepMetrics[], steps: TestStep[], mechType: Mech
   const wavg = (fn: (m: StepMetrics) => number) =>
     segs.reduce((s, m, i) => s + fn(m) * weights[i], 0) / totalW
 
-  // score=999 is a sentinel for zero-setpoint or empty segments (rise time / settling
-  // are undefined at setpoint=0). Exclude them from the score average so that structural
-  // zero-RPM steps (start from rest, wind-down) don't inflate the optimizer's objective.
   const scoreWeights = weights.map((w, i) => segs[i].score >= 999 ? 0 : w)
   const totalScoreW  = scoreWeights.reduce((s, w) => s + w, 0)
   const scoreWavg    = totalScoreW > 0
     ? segs.reduce((s, m, i) => s + m.score * scoreWeights[i], 0) / totalScoreW
     : 999
 
-  // riseTimeS display: show the weighted average, but exclude failed (-1) entries
-  const validRise = segs.filter((m, i) => m.riseTimeS >= 0).map((m, i) => ({ v: m.riseTimeS, w: weights[segs.indexOf(m)] }))
+  const validRise = segs.filter(m => m.riseTimeS >= 0).map((m, i) => ({ v: m.riseTimeS, w: weights[segs.indexOf(m)] }))
   const riseTimeS = validRise.length > 0
     ? validRise.reduce((s, x) => s + x.v * x.w, 0) / validRise.reduce((s, x) => s + x.w, 0)
     : -1
@@ -431,11 +471,10 @@ function aggregateMetrics(segs: StepMetrics[], steps: TestStep[], mechType: Mech
 
 // ─── Progressive test sequences ───────────────────────────────────────────────
 
-// Round a setpoint to a clean display value (avoids 1650.0000000000002 RPM)
 function sp(v: number, mechType: MechanismType): number {
-  if (mechType === 'flywheel') return Math.round(v)          // nearest RPM
-  if (mechType === 'arm')      return Math.round(v * 10) / 10 // 0.1°
-  return Math.round(v * 100) / 100                            // 0.01 m
+  if (isRotary(mechType)) return Math.round(v)           // nearest RPM
+  if (mechType === 'arm') return Math.round(v * 10) / 10 // 0.1°
+  return Math.round(v * 100) / 100                        // 0.01 m
 }
 
 export function getTestSequence(
@@ -446,77 +485,77 @@ export function getTestSequence(
   const s = nominalSetpoint
   const S = (v: number) => sp(v, mechType)
 
-  if (mechType === 'flywheel') {
+  if (isRotary(mechType)) {
     if (expCount < 3) return [
-      { setpointDisplay: S(s),          durationS: 2.0 }
+      { setpointDisplay: S(s),         durationS: 2.0 }
     ]
     if (expCount < 8) return [
-      { setpointDisplay: S(s * 0.5),   durationS: 1.0 },
-      { setpointDisplay: S(s),          durationS: 2.0 },
+      { setpointDisplay: S(s * 0.5),  durationS: 1.0 },
+      { setpointDisplay: S(s),         durationS: 2.0 },
     ]
     if (expCount < 15) return [
-      { setpointDisplay: S(s * 0.25),  durationS: 0.8 },
-      { setpointDisplay: S(s),          durationS: 1.5 },
-      { setpointDisplay: S(s * 0.6),   durationS: 1.0 },
-      { setpointDisplay: S(s),          durationS: 1.5 },
+      { setpointDisplay: S(s * 0.25), durationS: 0.8 },
+      { setpointDisplay: S(s),         durationS: 1.5 },
+      { setpointDisplay: S(s * 0.6),  durationS: 1.0 },
+      { setpointDisplay: S(s),         durationS: 1.5 },
     ]
     return [
-      { setpointDisplay: S(s * 0.25),  durationS: 0.8 },
-      { setpointDisplay: S(s * 0.75),  durationS: 1.0 },
-      { setpointDisplay: S(s * 0.4),   durationS: 0.7 },
-      { setpointDisplay: S(s),          durationS: 1.5 },
-      { setpointDisplay: S(s * 0.55),  durationS: 0.8 },
-      { setpointDisplay: S(s),          durationS: 1.5 },
+      { setpointDisplay: S(s * 0.25), durationS: 0.8 },
+      { setpointDisplay: S(s * 0.75), durationS: 1.0 },
+      { setpointDisplay: S(s * 0.4),  durationS: 0.7 },
+      { setpointDisplay: S(s),         durationS: 1.5 },
+      { setpointDisplay: S(s * 0.55), durationS: 0.8 },
+      { setpointDisplay: S(s),         durationS: 1.5 },
     ]
   }
 
   if (mechType === 'arm') {
     const low = S(Math.max(0, s * 0.05))
     if (expCount < 3) return [
-      { setpointDisplay: S(s),          durationS: 2.0 }
+      { setpointDisplay: S(s),         durationS: 2.0 }
     ]
     if (expCount < 8) return [
-      { setpointDisplay: S(s),          durationS: 1.5 },
-      { setpointDisplay: low,           durationS: 1.0 },
+      { setpointDisplay: S(s),         durationS: 1.5 },
+      { setpointDisplay: low,          durationS: 1.0 },
     ]
     if (expCount < 15) return [
-      { setpointDisplay: S(s * 0.5),   durationS: 1.0 },
-      { setpointDisplay: S(s),          durationS: 1.5 },
-      { setpointDisplay: low,           durationS: 1.0 },
-      { setpointDisplay: S(s),          durationS: 1.5 },
+      { setpointDisplay: S(s * 0.5),  durationS: 1.0 },
+      { setpointDisplay: S(s),         durationS: 1.5 },
+      { setpointDisplay: low,          durationS: 1.0 },
+      { setpointDisplay: S(s),         durationS: 1.5 },
     ]
     return [
-      { setpointDisplay: S(s * 0.3),   durationS: 0.8 },
-      { setpointDisplay: S(s * 0.8),   durationS: 1.0 },
-      { setpointDisplay: low,           durationS: 0.8 },
-      { setpointDisplay: S(s * 0.6),   durationS: 1.0 },
-      { setpointDisplay: S(s),          durationS: 1.5 },
-      { setpointDisplay: low,           durationS: 0.8 },
+      { setpointDisplay: S(s * 0.3),  durationS: 0.8 },
+      { setpointDisplay: S(s * 0.8),  durationS: 1.0 },
+      { setpointDisplay: low,          durationS: 0.8 },
+      { setpointDisplay: S(s * 0.6),  durationS: 1.0 },
+      { setpointDisplay: S(s),         durationS: 1.5 },
+      { setpointDisplay: low,          durationS: 0.8 },
     ]
   }
 
   // elevator
   const low = S(s * 0.05)
   if (expCount < 3) return [
-    { setpointDisplay: S(s),            durationS: 2.0 }
+    { setpointDisplay: S(s),           durationS: 2.0 }
   ]
   if (expCount < 8) return [
-    { setpointDisplay: S(s),            durationS: 1.5 },
-    { setpointDisplay: low,             durationS: 1.0 },
+    { setpointDisplay: S(s),           durationS: 1.5 },
+    { setpointDisplay: low,            durationS: 1.0 },
   ]
   if (expCount < 15) return [
-    { setpointDisplay: S(s * 0.5),     durationS: 1.0 },
-    { setpointDisplay: S(s),            durationS: 1.5 },
-    { setpointDisplay: low,             durationS: 1.0 },
-    { setpointDisplay: S(s),            durationS: 1.5 },
+    { setpointDisplay: S(s * 0.5),    durationS: 1.0 },
+    { setpointDisplay: S(s),           durationS: 1.5 },
+    { setpointDisplay: low,            durationS: 1.0 },
+    { setpointDisplay: S(s),           durationS: 1.5 },
   ]
   return [
-    { setpointDisplay: S(s * 0.2),     durationS: 0.8 },
-    { setpointDisplay: S(s * 0.8),     durationS: 1.0 },
-    { setpointDisplay: low,             durationS: 0.8 },
-    { setpointDisplay: S(s * 0.5),     durationS: 1.0 },
-    { setpointDisplay: S(s),            durationS: 1.5 },
-    { setpointDisplay: low,             durationS: 0.8 },
+    { setpointDisplay: S(s * 0.2),    durationS: 0.8 },
+    { setpointDisplay: S(s * 0.8),    durationS: 1.0 },
+    { setpointDisplay: low,            durationS: 0.8 },
+    { setpointDisplay: S(s * 0.5),    durationS: 1.0 },
+    { setpointDisplay: S(s),           durationS: 1.5 },
+    { setpointDisplay: low,            durationS: 0.8 },
   ]
 }
 
@@ -528,10 +567,6 @@ export function phaseLabel(expCount: number): string {
 }
 
 // ─── Phase 2 sequence generator ───────────────────────────────────────────────
-// Generates a fixed test sequence for the fine-tune phase.
-// The sequence is evenly spaced between minSP and maxSP with a configurable
-// randomization factor. Generated ONCE when Phase 2 starts, then reused for
-// all Phase 2 experiments so the GP can compare runs fairly.
 
 export function generatePhase2Sequence(
   mechType: MechanismType,
@@ -553,9 +588,6 @@ export function generatePhase2Sequence(
 }
 
 // ─── Phase-progressive sequence generator ────────────────────────────────────
-// Generates a fixed test sequence for a given fine-tune phase (2–6).
-// Each phase runs a harder, more realistic setpoint pattern.
-// Phases 2–5 scale dwell by dwellS; Phase 6 dwells are fixed (match simulation).
 
 export function generatePhaseSequence(
   mechType: MechanismType,
@@ -566,118 +598,242 @@ export function generatePhaseSequence(
   const s = nominalSetpoint
   const S = (v: number) => sp(v, mechType)
 
-  // Per-phase randomization caps
   const randCaps = [0, 0, 0.15, 0.12, 0.10, 0.08, 0.05]
   const rand = Math.min(randomization, randCaps[Math.min(phaseNum, 6)] ?? 0.15)
 
-  function jitter(frac: number, cap: number): number {
-    return frac + (Math.random() - 0.5) * 2 * cap * randomization
+  // Fractions < 0.10 represent stow/home positions and are never jittered.
+  function jit(frac: number): number {
+    if (frac < 0.10) return frac
+    return Math.max(0.05, Math.min(1.5, frac + (Math.random() - 0.5) * 2 * rand * randomization))
   }
 
+  // ── Position control: Arm & Elevator ─────────────────────────────────────────
+  // All phases use deploy/stow cycles. Rotary ramp sequences don't apply here
+  // because position mechanisms move between defined points, not speed sweeps.
+  if (mechType === 'arm' || mechType === 'elevator') {
+    const P = (frac: number, dur: number): import('../types').TestStep =>
+      ({ setpointDisplay: S(s * jit(frac)), durationS: dur })
+
+    if (phaseNum <= 2) {
+      // Basic stow → deploy cycles. Establishes whether gains can reach the target
+      // in both directions before the optimizer narrows the search space.
+      return [
+        P(0.05, 1.2), P(1.00, 1.5),
+        P(0.05, 1.2), P(1.00, 1.5),
+      ]
+    }
+
+    if (phaseNum === 3) {
+      // Graduated deploy targets with stow returns. Verifies gains handle partial
+      // moves (60%, 80%) as well as full deploy — common in multi-position mechanisms.
+      return [
+        P(0.05, 1.0), P(0.60, 1.2),
+        P(0.05, 1.0), P(0.80, 1.2),
+        P(0.05, 1.0), P(1.00, 1.5),
+        P(0.05, 1.0), P(1.00, 1.5),
+      ]
+    }
+
+    if (phaseNum === 4) {
+      // Non-sequential heights: tests re-targeting from arbitrary positions,
+      // not just stow→full. Mixed dwell times stress settling at each height.
+      return [
+        P(0.05, 0.8), P(1.00, 1.2),
+        P(0.05, 0.8), P(0.40, 1.0),
+        P(0.05, 0.8), P(0.70, 1.0),
+        P(0.05, 0.8), P(1.00, 1.2),
+        P(0.05, 0.8), P(0.60, 1.0),
+        P(0.05, 0.8), P(1.00, 1.2),
+        P(0.05, 0.8), P(0.80, 1.0),
+        P(0.05, 0.8), P(1.00, 1.0),
+      ]
+    }
+
+    if (phaseNum === 5) {
+      // Fast full-range cycles with varied intermediate targets. Short dwells expose
+      // gains that are too slow or oscillate before settling within the window.
+      return [
+        P(0.05, 0.5), P(1.00, 0.8),
+        P(0.05, 0.5), P(1.00, 0.8),
+        P(0.05, 0.5), P(0.50, 0.7),
+        P(0.05, 0.5), P(1.00, 0.8),
+        P(0.05, 0.5), P(1.00, 0.8),
+        P(0.05, 0.5), P(0.75, 0.7),
+        P(0.05, 0.5), P(1.00, 0.8),
+        P(0.05, 0.5), P(0.30, 0.7),
+        P(0.05, 0.5), P(0.90, 0.8),
+        P(0.05, 0.5), P(1.00, 0.8),
+        P(0.05, 0.5), P(1.00, 0.8),
+        P(0.05, 0.5), P(1.00, 0.8),
+      ]
+    }
+
+    // Phase 6: full match simulation for position-controlled mechanisms.
+    // Setpoints are structural (real match motion) — no jitter applied.
+    const M = (frac: number, dur: number): import('../types').TestStep =>
+      ({ setpointDisplay: S(s * frac), durationS: dur })
+
+    if (mechType === 'arm') {
+      // Arm match sim: deploy/stow cycles with defense posture and end-game hold.
+      // Dwells reflect real arm travel time — long enough to test settling.
+      return [
+        // AUTO: 2 scoring cycles
+        M(0.05, 0.5), M(1.00, 1.5), M(0.05, 0.8), M(1.00, 1.5), M(0.05, 1.0),
+        // EARLY TELEOP: intake/score rhythm
+        M(1.00, 1.2), M(0.05, 0.8), M(1.00, 1.2), M(0.05, 0.8),
+        M(1.00, 1.2), M(0.05, 0.8), M(1.00, 1.2), M(0.05, 1.5),
+        // DEFENSE: arm tucked low while robot takes hits
+        M(0.20, 2.5),
+        // RESUME SCORING
+        M(1.00, 1.0), M(0.05, 0.7), M(1.00, 1.0), M(0.05, 0.7),
+        // PARTIAL DEPLOY: mid-height play (climb-over defense, partial intake)
+        M(0.50, 1.5), M(1.00, 1.0), M(0.05, 0.8),
+        // LATE MATCH: fast scoring sprint
+        M(1.00, 1.0), M(0.05, 0.6), M(1.00, 1.0), M(0.05, 0.6),
+        M(1.00, 1.0), M(0.05, 0.6), M(1.00, 1.0), M(0.05, 0.8),
+        // END-GAME: hold deployed for climb/trap, then stow
+        M(0.80, 3.5), M(0.05, 2.0),
+      ]
+    }
+
+    // Elevator Phase 6: cycles through L2 (35%), L3 (65%), L4 (100%) scoring heights.
+    // Tests gravity-opposed ascent (hardest) and gravity-assisted descent (overshoot risk).
+    return [
+      // AUTO: 2 high-goal cycles
+      M(0.05, 0.5), M(1.00, 1.5), M(0.05, 0.8), M(1.00, 1.5), M(0.05, 0.8),
+      // EARLY TELEOP: mixed L3/L4
+      M(1.00, 1.2), M(0.05, 0.8), M(0.65, 1.0), M(0.05, 0.8),
+      M(1.00, 1.2), M(0.05, 0.8), M(0.65, 1.0), M(0.05, 1.5),
+      // LOW SCORING: L2 rapid cycles
+      M(0.35, 1.0), M(0.05, 0.6), M(0.35, 1.0), M(0.05, 0.6),
+      M(0.35, 1.0), M(0.05, 1.0),
+      // REPOSITIONING
+      M(0.05, 2.0),
+      // MIXED HEIGHTS
+      M(0.65, 1.2), M(0.05, 0.8), M(0.35, 1.0), M(0.05, 0.8),
+      M(1.00, 1.2), M(0.05, 0.8), M(0.65, 1.0), M(0.05, 0.8),
+      // LATE MATCH: L4 push for max points
+      M(1.00, 1.2), M(0.05, 0.8), M(1.00, 1.2), M(0.05, 0.8),
+      // END-GAME: hold high for climb, then lower safely
+      M(0.85, 4.0), M(0.05, 2.0),
+    ]
+  }
+
+  // ── Rotary: Flywheel & Roller (velocity control) ─────────────────────────────
+  // Phases 2–5 use speed ramp and sweep sequences.
+
   if (phaseNum <= 2) {
-    // Phase 2: 4-step simple ramp, 1.2s base dwell
-    const fracs = [0.25, 0.50, 0.75, 1.00]
-    return fracs.map(f => ({
-      setpointDisplay: S(s * Math.max(0, Math.min(1.5, jitter(f, rand)))),
+    return [0.25, 0.50, 0.75, 1.00].map(f => ({
+      setpointDisplay: S(s * jit(f)),
       durationS: 1.2,
     }))
   }
 
   if (phaseNum === 3) {
-    // Phase 3: 8-step ramp with dip-and-recover, 1.0s/0.8s dwell
-    const steps: [number, number][] = [
+    const s3: [number, number][] = [
       [0.25, 1.0], [0.60, 1.0], [0.45, 0.8], [0.75, 1.0],
       [0.55, 0.8], [0.85, 1.0], [0.70, 0.8], [1.00, 1.0],
     ]
-    return steps.map(([f, d]) => ({
-      setpointDisplay: S(s * Math.max(0, Math.min(1.5, jitter(f, rand)))),
-      durationS: d,
-    }))
+    return s3.map(([f, d]) => ({ setpointDisplay: S(s * jit(f)), durationS: d }))
   }
 
   if (phaseNum === 4) {
-    // Phase 4: 16-step aggressive mixed up/down, 0.8s/0.65s dwell
-    const steps: [number, number][] = [
+    const s4: [number, number][] = [
       [0.20, 0.65], [1.00, 0.8],  [0.30, 0.65], [0.80, 0.8],
       [0.50, 0.8],  [1.00, 0.8],  [0.40, 0.65], [0.70, 0.8],
       [0.90, 0.8],  [0.60, 0.8],  [1.00, 0.8],  [0.25, 0.65],
       [0.85, 0.8],  [0.55, 0.8],  [0.95, 0.8],  [1.00, 0.8],
     ]
-    return steps.map(([f, d]) => ({
-      setpointDisplay: S(s * Math.max(0, Math.min(1.5, jitter(f, rand)))),
-      durationS: d,
-    }))
+    return s4.map(([f, d]) => ({ setpointDisplay: S(s * jit(f)), durationS: d }))
   }
 
   if (phaseNum === 5) {
-    // Phase 5: 30-step stress test — max→0→max cycles, 0.6s/0.5s dwell
-    const steps: [number, number][] = [
-      // cold start
+    const s5: [number, number][] = [
       [0.00, 0.5], [1.00, 0.6],
-      // first max→zero→max cycle
       [0.00, 0.5], [1.00, 0.6], [0.00, 0.5], [1.00, 0.6],
-      // mid-range chaos
       [0.40, 0.6], [1.00, 0.6], [0.60, 0.6], [0.00, 0.5], [0.80, 0.6], [1.00, 0.6],
-      // second zero cycle with intermediates
       [0.00, 0.5], [0.50, 0.6], [1.00, 0.6], [0.00, 0.5], [0.70, 0.6], [1.00, 0.6],
-      // descending staircase
       [0.80, 0.6], [0.60, 0.6], [0.40, 0.6], [0.20, 0.6], [0.00, 0.5],
-      // final ramp
       [1.00, 0.6], [0.00, 0.5], [1.00, 0.6], [0.00, 0.5], [1.00, 0.6],
-      // hold
       [1.00, 0.6], [0.00, 0.5],
     ]
-    // Don't jitter zero-fraction steps — jitter on f=0 creates tiny near-zero targets
-    // (e.g. 7 RPM) where overshoot% becomes meaningless (64% = 4 RPM past a 7 RPM target).
-    return steps.map(([f, d]) => ({
-      setpointDisplay: f === 0 ? S(0) : S(s * Math.max(0, Math.min(1.5, jitter(f, rand)))),
+    return s5.map(([f, d]) => ({ setpointDisplay: S(s * jit(f)), durationS: d }))
+  }
+
+  // Phase 6: rotary match simulation — branches on mechType
+  if (mechType === 'roller') {
+    // Roller match sim: intake/conveyor cycling.
+    // Tests speed hold under game-piece load (key metric) and quick on/off transitions.
+    // Negative fractions = reverse (unjam / outtake).
+    const r6: [number, number][] = [
+      // AUTO: spin up, intake 2 game pieces
+      [0.00, 0.5], [1.00, 1.5], [0.00, 0.5], [1.00, 1.5], [0.00, 1.0],
+      // EARLY TELEOP: rapid intake cycles (5 pieces)
+      [1.00, 0.8], [0.00, 0.4], [1.00, 0.8], [0.00, 0.4],
+      [1.00, 0.8], [0.00, 0.4], [1.00, 0.8], [0.00, 0.4],
+      [1.00, 0.8], [0.00, 1.5],
+      // OUTTAKE: reverse to unjam, then re-intake
+      [-0.40, 0.4], [0.00, 0.3], [1.00, 0.8], [0.00, 0.5],
+      // REPOSITIONING: drive to new intake zone, roller off
+      [0.00, 2.5],
+      // SECOND INTAKE SESSION
+      [1.00, 0.8], [0.00, 0.4], [1.00, 0.8], [0.00, 0.4],
+      [1.00, 0.8], [0.00, 0.4], [1.00, 0.8], [0.00, 2.0],
+      // CAREFUL PICK-UP: reduced speed near alliance wall
+      [0.70, 1.0], [0.00, 0.4], [0.70, 1.0], [0.00, 1.0],
+      // FINAL SPRINT: urgent fast cycles end-of-match
+      [1.00, 0.6], [0.00, 0.3], [1.00, 0.6], [0.00, 0.3],
+      [1.00, 0.6], [0.00, 0.3], [1.00, 0.6], [0.00, 0.3],
+      [1.00, 0.6], [0.00, 3.0],
+    ]
+    return r6.map(([f, d]) => ({
+      setpointDisplay: f < 0 ? -S(s * Math.abs(f)) : S(s * f),
       durationS: d,
     }))
   }
 
-  // Phase 6: ~75-step 2-minute match simulation — fixed dwells, no dwellS scaling
-  // Shooting-on-the-move sections use structural setpoint variation (not random jitter).
-  const p6Steps: [number, number][] = [
-    // AUTO PERIOD (~15s): spin-up, 3 shots, drive away
+  // Flywheel Phase 6: 2-minute match simulation (shooter).
+  // "Shooting on the move" sections use structured setpoint variation (camera-correction
+  // jitter around target speed) — this is intentional, not random noise.
+  const f6: [number, number][] = [
+    // AUTO: spin-up, 3 shots, drive away
     [0.00, 0.8],  [1.00, 1.5],  [0.85, 0.6], [1.00, 0.6], [0.85, 0.6],
     [1.00, 0.6],  [0.85, 0.6],  [1.00, 0.8], [0.15, 2.0],
-    // EARLY TELEOP SHOTS (~20s): fixed-position shot cluster
+    // EARLY TELEOP: fixed-position shot cluster
     [1.00, 0.8],  [0.85, 0.5],  [1.00, 0.6], [0.85, 0.5], [1.00, 0.6],
     [0.85, 0.5],  [1.00, 0.6],  [0.85, 0.5], [1.00, 0.8], [0.20, 1.5],
-    // SHOOTING ON THE MOVE 1 (~15s): camera-correction jitter — structural, not random
+    // SHOOTING ON THE MOVE 1: camera-correction setpoint variation
     [0.95, 0.5],  [0.88, 0.4],  [1.00, 0.5], [0.92, 0.4], [0.98, 0.5],
     [0.86, 0.4],  [1.00, 0.5],  [0.90, 0.4], [0.97, 0.5], [0.84, 0.4],
     [1.00, 0.5],  [0.93, 0.4],  [0.88, 0.5], [1.00, 0.5], [0.15, 1.5],
-    // MID-MATCH REPOSITIONING (~15s)
+    // MID-MATCH REPOSITIONING
     [0.15, 3.0],  [1.00, 0.8],  [0.85, 0.5], [1.00, 0.6], [0.85, 0.5],
     [1.00, 0.6],  [0.20, 3.0],
-    // SHOOTING ON THE MOVE 2 (~15s)
+    // SHOOTING ON THE MOVE 2
     [0.90, 0.5],  [1.00, 0.4],  [0.87, 0.5], [0.97, 0.4], [1.00, 0.5],
     [0.91, 0.4],  [0.85, 0.5],  [1.00, 0.4], [0.93, 0.5], [0.88, 0.4],
     [1.00, 0.5],  [0.95, 0.5],  [0.20, 1.5],
-    // LATE-MATCH PUSH (~20s): urgent full-power shots
+    // LATE-MATCH: urgent full-power shots
     [1.00, 1.0],  [0.85, 0.5],  [1.00, 0.6], [0.85, 0.5], [1.00, 0.6],
     [0.85, 0.5],  [1.00, 0.6],  [0.85, 0.5], [1.00, 0.6], [0.85, 0.5],
     [1.00, 0.6],  [0.85, 0.5],  [1.00, 1.0],
-    // WIND-DOWN (~10s)
+    // WIND-DOWN
     [0.50, 2.0],  [0.25, 2.0],  [0.00, 3.0],
   ]
-  return p6Steps.map(([f, d]) => ({
-    setpointDisplay: S(s * f),
-    durationS: d,
-  }))
+  return f6.map(([f, d]) => ({ setpointDisplay: S(s * f), durationS: d }))
 }
 
 // ─── Display unit label ───────────────────────────────────────────────────────
 
 export function displayUnitLabel(cfg: MechanismConfig): string {
-  if (cfg.type === 'flywheel') return 'RPM'
-  if (cfg.type === 'arm')      return '°'
+  if (isRotary(cfg.type)) return 'RPM'
+  if (cfg.type === 'arm')  return '°'
   return 'm'
 }
 
 export function defaultSetpoint(cfg: MechanismConfig): number {
   if (cfg.type === 'flywheel') return 3000
+  if (cfg.type === 'roller')   return 1000
   if (cfg.type === 'arm')      return 45
   return 1.0
 }
@@ -685,18 +841,17 @@ export function defaultSetpoint(cfg: MechanismConfig): number {
 // ─── Baseline gain calculator ─────────────────────────────────────────────────
 
 export function calculateBaselineGains(cfg: MechanismConfig): import('../types').Gains {
-  const motor  = MOTORS[cfg.motorType]
-  const kV     = motorKvCTRE(motor)
+  const motor = MOTORS[cfg.motorType]
+  const kV    = motorKvCTRE(motor)
 
   let J_mech: number
-  if      (cfg.type === 'flywheel') J_mech = 0.5 * cfg.massKg * cfg.radiusM ** 2
-  else if (cfg.type === 'arm')      J_mech = (1 / 3) * cfg.massKg * cfg.lengthM ** 2
-  else                              J_mech = cfg.massKg * cfg.spoolRadiusM ** 2
+  if      (isRotary(cfg.type))        J_mech = 0.5 * cfg.massKg * cfg.radiusM ** 2
+  else if (cfg.type === 'arm')        J_mech = (1 / 3) * cfg.massKg * cfg.lengthM ** 2
+  else                                J_mech = cfg.massKg * cfg.spoolRadiusM ** 2
 
-  const J_motor  = cfg.numMotors * motor.rotorInertiaKgM2 * cfg.gearRatio ** 2
-  const J_total  = J_mech + J_motor
+  const J_motor = cfg.numMotors * motor.rotorInertiaKgM2 * cfg.gearRatio ** 2
+  const J_total = J_mech + J_motor
 
-  // kA: voltage per (RPS/s of rotor acceleration)
   const kA = J_total * motor.resistanceOhms * 2 * Math.PI /
     (motor.KtNmPerAmp * cfg.numMotors * cfg.gearRatio ** 2)
 
@@ -710,7 +865,7 @@ export function calculateBaselineGains(cfg: MechanismConfig): import('../types')
   }
 
   return {
-    kP: cfg.type === 'flywheel' ? 0.05 : 1.0,
+    kP: isRotary(cfg.type) ? 0.05 : 1.0,
     kI: 0,
     kD: 0,
     kS: 0.25,

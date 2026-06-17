@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { MechanismConfig, MechanismType, MotorType } from '../types'
+import NumericInput from './NumericInput'
 import { MOTORS, MOTOR_GROUPS, motorKvCTRE } from '../physics/motors'
 
 interface Props {
@@ -11,6 +13,7 @@ interface Props {
 
 const MECH_TABS: { type: MechanismType; label: string }[] = [
   { type: 'flywheel', label: 'Flywheel' },
+  { type: 'roller',   label: 'Roller' },
   { type: 'arm',      label: 'Arm' },
   { type: 'elevator', label: 'Elevator' }
 ]
@@ -18,8 +21,19 @@ const MECH_TABS: { type: MechanismType; label: string }[] = [
 export default function MechanismPanel({
   mechanism, setpoint, unitLabel, onMechanismChange, onSetpointChange
 }: Props): JSX.Element {
+  // Gear ratio is stored internally as a decimal (motor/output), but displayed
+  // as input:output so it matches how FRC gearboxes are documented (e.g. "15:1").
+  const [gearNumer, setGearNumer] = useState(mechanism.gearRatio)
+  const [gearDenom, setGearDenom] = useState(1)
+
   function set<K extends keyof MechanismConfig>(key: K, value: MechanismConfig[K]): void {
     onMechanismChange({ ...mechanism, [key]: value })
+  }
+
+  function setGear(n: number, d: number): void {
+    setGearNumer(n)
+    setGearDenom(d)
+    if (d > 0 && n > 0) set('gearRatio', n / d)
   }
 
   function numField(
@@ -33,13 +47,12 @@ export default function MechanismPanel({
       <div className="field" key={key}>
         <label className="field-label">{label}</label>
         <div className="field-row">
-          <input
-            type="number"
+          <NumericInput
             className="input-num"
             value={mechanism[key] as number}
             step={step}
             min={min}
-            onChange={e => set(key, parseFloat(e.target.value) || 0)}
+            onChange={v => set(key, v)}
           />
           <span className="field-unit">{unit}</span>
         </div>
@@ -48,7 +61,7 @@ export default function MechanismPanel({
   }
 
   const selectedMotor = MOTORS[mechanism.motorType]
-  const showTrapWarning = mechanism.type === 'flywheel' && selectedMotor?.commutation === 'trapezoidal'
+  const showTrapWarning = (mechanism.type === 'flywheel' || mechanism.type === 'roller') && selectedMotor?.commutation === 'trapezoidal'
 
   return (
     <div className="mechanism-panel">
@@ -156,7 +169,29 @@ export default function MechanismPanel({
         </div>
       </div>
 
-      {numField('Gear Ratio', 'gearRatio', ':1', 0.5, 0.1)}
+      <div className="field">
+        <label className="field-label">Gear Ratio</label>
+        <div className="gear-ratio-row">
+          <NumericInput
+            className="input-num"
+            value={gearNumer}
+            step={1}
+            min={0.1}
+            onChange={v => setGear(v, gearDenom)}
+          />
+          <span className="gear-ratio-colon">:</span>
+          <NumericInput
+            className="input-num"
+            value={gearDenom}
+            step={1}
+            min={0.1}
+            onChange={v => setGear(gearNumer, v)}
+          />
+          {!(gearDenom === 1 || gearNumer === 1) && (
+            <span className="gear-ratio-computed">= {(gearNumer / gearDenom).toFixed(3)}×</span>
+          )}
+        </div>
+      </div>
 
       <div className="section-divider" />
 
@@ -164,7 +199,7 @@ export default function MechanismPanel({
       <div className="section-label">Parameters</div>
       {numField('Mass', 'massKg', 'kg', 0.1, 0.01)}
 
-      {mechanism.type === 'flywheel' && (
+      {(mechanism.type === 'flywheel' || mechanism.type === 'roller') && (
         numField('Radius', 'radiusM', 'm', 0.01, 0.001)
       )}
 
@@ -184,16 +219,15 @@ export default function MechanismPanel({
       <div className="section-label">Setpoint</div>
       <div className="field">
         <label className="field-label">
-          {mechanism.type === 'flywheel' ? 'Target Velocity' :
-           mechanism.type === 'arm'      ? 'Target Angle'    : 'Target Height'}
+          {mechanism.type === 'flywheel' || mechanism.type === 'roller' ? 'Target Velocity' :
+           mechanism.type === 'arm'                                    ? 'Target Angle'    : 'Target Height'}
         </label>
         <div className="field-row">
-          <input
-            type="number"
+          <NumericInput
             className="input-num"
             value={setpoint}
             step={mechanism.type === 'flywheel' ? 100 : mechanism.type === 'arm' ? 5 : 0.1}
-            onChange={e => onSetpointChange(parseFloat(e.target.value) || 0)}
+            onChange={onSetpointChange}
           />
           <span className="field-unit">{unitLabel}</span>
         </div>

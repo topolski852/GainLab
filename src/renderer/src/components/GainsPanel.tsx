@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Gains, StepMetrics, MechanismConfig, OptimizerEntry, PhaseInfo, AutoTuneConfig } from '../types'
+import NumericInput from './NumericInput'
 import { MOTORS } from '../physics/motors'
 import { displayUnitLabel } from '../physics/simulator'
 
@@ -171,29 +172,23 @@ export default function GainsPanel({
   const showKG     = mechanism.type === 'arm' || mechanism.type === 'elevator'
   const visibleGains = GAIN_DEFS.filter(g => g.key !== 'kG' || showKG)
 
-  function setGain(key: keyof Gains, val: string): void {
-    const n = parseFloat(val)
-    if (!isNaN(n)) onGainsChange({ ...gains, [key]: n })
+  function setGain(key: keyof Gains, val: number): void {
+    onGainsChange({ ...gains, [key]: val })
   }
 
-  function setCfgField(field: keyof AutoTuneConfig, val: string): void {
-    const n = parseFloat(val)
-    if (!isNaN(n)) onAutoTuneConfigChange({ ...autoTuneConfig, [field]: n })
+  function setCfgField(field: keyof AutoTuneConfig, val: number): void {
+    onAutoTuneConfigChange({ ...autoTuneConfig, [field]: val })
   }
 
-  function setPhaseRadius(idx: number, val: string): void {
-    const n = parseFloat(val)
-    if (isNaN(n)) return
+  function setPhaseRadius(idx: number, val: number): void {
     const next = [...autoTuneConfig.phaseRadii]
-    next[idx] = n
+    next[idx] = val
     onAutoTuneConfigChange({ ...autoTuneConfig, phaseRadii: next })
   }
 
-  function setPhaseThreshold(idx: number, val: string): void {
-    const n = parseFloat(val)
-    if (isNaN(n)) return
+  function setPhaseThreshold(idx: number, val: number): void {
     const next = [...autoTuneConfig.phaseThresholds]
-    next[idx] = n
+    next[idx] = val
     onAutoTuneConfigChange({ ...autoTuneConfig, phaseThresholds: next })
   }
 
@@ -232,13 +227,12 @@ export default function GainsPanel({
         {visibleGains.map(def => (
           <div key={def.key} className="gain-row">
             <label className="gain-label">{def.label}</label>
-            <input
-              type="number"
+            <NumericInput
               className="gain-input"
               value={gains[def.key]}
               step={def.step}
               min={def.min}
-              onChange={e => setGain(def.key, e.target.value)}
+              onChange={v => setGain(def.key, v)}
             />
             <span className="gain-unit">{def.unit}</span>
           </div>
@@ -345,26 +339,24 @@ export default function GainsPanel({
         <div className="at-idle-controls">
           <div className="at-config-row">
             <label className="at-config-label">Target score</label>
-            <input
-              type="number"
+            <NumericInput
               className="at-config-input"
               value={autoTuneConfig.targetScore}
               min={0.1}
               step={0.1}
-              onChange={e => setCfgField('targetScore', e.target.value)}
+              onChange={v => setCfgField('targetScore', v)}
             />
             <span className="at-config-unit">× {autoTuneConfig.consecutiveHits} in a row</span>
           </div>
           <div className="at-config-row">
             <label className="at-config-label">Phases</label>
-            <input
-              type="number"
+            <NumericInput
               className="at-config-input at-config-input-sm"
               value={autoTuneConfig.numPhases}
               min={2}
               max={6}
               step={1}
-              onChange={e => setCfgField('numPhases', e.target.value)}
+              onChange={v => setCfgField('numPhases', Math.round(v))}
             />
             <span className="at-config-unit">total (P1 + {autoTuneConfig.numPhases - 1} fine-tune)</span>
           </div>
@@ -377,62 +369,62 @@ export default function GainsPanel({
             <div className="at-advanced-grid">
               <div className="at-adv-row">
                 <label>Consecutive hits</label>
-                <input type="number" value={autoTuneConfig.consecutiveHits} min={1} max={20} step={1}
-                  onChange={e => setCfgField('consecutiveHits', e.target.value)} />
+                <NumericInput value={autoTuneConfig.consecutiveHits} min={1} max={20} step={1}
+                  onChange={v => setCfgField('consecutiveHits', Math.round(v))} />
               </div>
               <div className="at-adv-row">
                 <label>P1 max experiments</label>
-                <input type="number" value={autoTuneConfig.p1MaxExperiments} min={7} max={100} step={1}
-                  onChange={e => setCfgField('p1MaxExperiments', e.target.value)} />
+                <NumericInput value={autoTuneConfig.p1MaxExperiments} min={7} max={100} step={1}
+                  onChange={v => setCfgField('p1MaxExperiments', Math.round(v))} />
               </div>
               <div className="at-adv-row">
                 <label>Phase N max experiments</label>
-                <input type="number" value={autoTuneConfig.phaseMaxExperiments} min={5} max={60} step={1}
-                  onChange={e => setCfgField('phaseMaxExperiments', e.target.value)} />
+                <NumericInput value={autoTuneConfig.phaseMaxExperiments} min={5} max={60} step={1}
+                  onChange={v => setCfgField('phaseMaxExperiments', Math.round(v))} />
               </div>
               {autoTuneConfig.numPhases >= 6 && (
                 <div className="at-adv-row">
                   <label>Phase 6 max experiments</label>
-                  <input type="number" value={autoTuneConfig.p6MaxExperiments} min={2} max={30} step={1}
-                    onChange={e => setCfgField('p6MaxExperiments', e.target.value)} />
+                  <NumericInput value={autoTuneConfig.p6MaxExperiments} min={2} max={30} step={1}
+                    onChange={v => setCfgField('p6MaxExperiments', Math.round(v))} />
                 </div>
               )}
               {[2, 3, 4, 5, 6].slice(0, autoTuneConfig.numPhases - 1).map((pn, i) => (
                 <div key={pn} className="at-adv-row">
                   <label>Phase {pn} radius</label>
-                  <input type="number" value={autoTuneConfig.phaseRadii[i] ?? 0.05}
+                  <NumericInput value={autoTuneConfig.phaseRadii[i] ?? 0.05}
                     min={0.01} max={0.5} step={0.01}
-                    onChange={e => setPhaseRadius(i, e.target.value)} />
+                    onChange={v => setPhaseRadius(i, v)} />
                   <span className="at-adv-unit">± {((autoTuneConfig.phaseRadii[i] ?? 0.05) * 100).toFixed(0)}%</span>
                 </div>
               ))}
               <div className="at-adv-row">
                 <label>Fine-tune setpoints</label>
-                <input type="number" value={autoTuneConfig.numSetpoints} min={2} max={16} step={1}
-                  onChange={e => setCfgField('numSetpoints', e.target.value)} />
+                <NumericInput value={autoTuneConfig.numSetpoints} min={2} max={16} step={1}
+                  onChange={v => setCfgField('numSetpoints', Math.round(v))} />
               </div>
               <div className="at-adv-row">
                 <label>Dwell time</label>
-                <input type="number" value={autoTuneConfig.dwellS} min={0.3} max={5} step={0.1}
-                  onChange={e => setCfgField('dwellS', e.target.value)} />
+                <NumericInput value={autoTuneConfig.dwellS} min={0.3} max={5} step={0.1}
+                  onChange={v => setCfgField('dwellS', v)} />
                 <span className="at-adv-unit">s</span>
               </div>
               <div className="at-adv-row">
                 <label>Randomization</label>
-                <input type="number" value={autoTuneConfig.randomization} min={0} max={1} step={0.05}
-                  onChange={e => setCfgField('randomization', e.target.value)} />
+                <NumericInput value={autoTuneConfig.randomization} min={0} max={1} step={0.05}
+                  onChange={v => setCfgField('randomization', v)} />
               </div>
               <div className="at-adv-row">
                 <label>Phase extension max</label>
-                <input type="number" value={autoTuneConfig.phaseExtensionMax} min={10} max={200} step={10}
-                  onChange={e => setCfgField('phaseExtensionMax', e.target.value)} />
+                <NumericInput value={autoTuneConfig.phaseExtensionMax} min={10} max={200} step={10}
+                  onChange={v => setCfgField('phaseExtensionMax', Math.round(v))} />
                 <span className="at-adv-unit">extra experiments</span>
               </div>
               {[1, 2, 3, 4, 5].slice(0, Math.min(autoTuneConfig.numPhases - 1, 5)).map((pn, i) => (
                 <div key={`thr${pn}`} className="at-adv-row">
                   <label>P{pn}→P{pn + 1} threshold</label>
-                  <input type="number" value={autoTuneConfig.phaseThresholds[i] ?? 30} min={1} max={500} step={1}
-                    onChange={e => setPhaseThreshold(i, e.target.value)} />
+                  <NumericInput value={autoTuneConfig.phaseThresholds[i] ?? 30} min={1} max={500} step={1}
+                    onChange={v => setPhaseThreshold(i, Math.round(v))} />
                   <span className="at-adv-unit">max score</span>
                 </div>
               ))}
@@ -514,13 +506,12 @@ export default function GainsPanel({
           </div>
         ) : (
           <div className="manual-run-row">
-            <input
-              type="number"
+            <NumericInput
               className="manual-run-input"
               value={manualCount}
               min={1}
               max={200}
-              onChange={e => setManualCount(Math.max(1, parseInt(e.target.value) || 1))}
+              onChange={v => setManualCount(Math.max(1, Math.round(v)))}
               title="Experiments to run"
             />
             <span className="manual-run-unit">experiments</span>

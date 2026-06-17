@@ -1,7 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import {
   MechanismConfig, Gains, AppState, StepResponsePoint, OptimizerEntry,
-  ConnectionStatus, PhaseInfo, AutoTuneConfig, TestStep, defaultAutoTuneConfig
+  ConnectionStatus, PhaseInfo, AutoTuneConfig, TestStep, defaultAutoTuneConfig,
+  Project, MotorProfile, defaultMotorProfile, defaultProject
 } from './types'
 import {
   runMultiStepSimulation, runSimulation, calculateBaselineGains,
@@ -13,6 +14,9 @@ import MechanismPanel from './components/MechanismPanel'
 import StepGraph from './components/StepGraph'
 import GainsPanel from './components/GainsPanel'
 import StatusBar from './components/StatusBar'
+import Launcher from './components/Launcher'
+import ProjectSidebar from './components/ProjectSidebar'
+import MotorConfigModal from './components/MotorConfigModal'
 
 const DEFAULT_MECHANISM: MechanismConfig = {
   type: 'flywheel',
@@ -57,6 +61,16 @@ export default function App(): JSX.Element {
   // ── Manual run state ────────────────────────────────────────────────────────
   const [manualRunning, setManualRunning] = useState(false)
   const [manualRunProgress, setManualRunProgress] = useState({ done: 0, total: 0 })
+
+  // ── Project state ────────────────────────────────────────────────────────────
+  const [appView, setAppView]               = useState<'launcher' | 'project'>('launcher')
+  const [activeProject, setActiveProject]   = useState<Project | null>(null)
+  const [activeProjectPath, setActiveProjectPath] = useState<string | null>(null)
+  const [activeMotorId, setActiveMotorId]   = useState<string | null>(null)
+  const [isSaving, setIsSaving]             = useState(false)
+  const [showMotorConfig, setShowMotorConfig] = useState(false)
+  const [configMotorId, setConfigMotorId]   = useState<string | null>(null)
+  const [motorConfigDraft, setMotorConfigDraft] = useState<MotorProfile | null>(null)
 
   // ── Optimizer refs ──────────────────────────────────────────────────────────
   const optimizerRef      = useRef<BayesianOptimizer | null>(null)
@@ -468,6 +482,240 @@ export default function App(): JSX.Element {
     }
   }, [gains, mechanism, testCount])
 
+  // ── Project management ──────────────────────────────────────────────────────
+
+  function resetTunerState(): void {
+    optimizerRef.current      = null
+    fineTuneOptRef.current    = null
+    fineTuneSeqRef.current    = []
+    allEntriesRef.current     = []
+    currentPhaseRef.current   = 0
+    consecutiveHitsRef.current = 0
+    phaseExpCountRef.current  = 0
+    phaseExtCountRef.current  = 0
+    phaseBestScoreRef.current = Infinity
+    autoTuneActiveRef.current = false
+    manualActiveRef.current   = false
+    setCurrentPhase(0)
+    setConsecutiveHits(0)
+    setPhaseExpCount(0)
+    setPhaseExtCount(0)
+    setPhaseBestScore(Infinity)
+    setAutoTuneRunning(false)
+    setAutoTuneDone(false)
+    setAutoTuneFailed(false)
+    setManualRunning(false)
+    setHistory([])
+    setTestCount(0)
+    setStepData([])
+    setSegmentBoundaries([])
+    setMetrics(null)
+  }
+
+  function loadMotor(motor: MotorProfile): void {
+    resetTunerState()
+    setMechanism(motor.mechanism)
+    setGains(motor.gains)
+    setSetpointDisplay(motor.nominalSetpoint)
+    setAutoTuneConfig(defaultAutoTuneConfig(motor.nominalSetpoint))
+    optimizerRef.current = new BayesianOptimizer(defaultBounds(motor.mechanism.type), motor.mechanism.type)
+  }
+
+  function syncMotorToProject(project: Project, motorId: string): Project {
+    const bestEntry = allEntriesRef.current.length > 0
+      ? allEntriesRef.current.reduce((b, e) => e.metrics.score < b.metrics.score ? e : b)
+      : null
+    const gainsToSave = bestEntry?.gains ?? gains
+    return {
+      ...project,
+      updatedAt: new Date().toISOString(),
+      motors: project.motors.map(m =>
+        m.id === motorId
+          ? { ...m, gains: gainsToSave, mechanism, nominalSetpoint: setpointDisplay }
+          : m
+      )
+    }
+  }
+
+  async function saveProject(project: Project, path: string | null): Promise<string | null> {
+    const data = JSON.stringify(project, null, 2)
+    if (path) {
+      await window.api.saveProject(path, data)
+      await window.api.addRecentProject({ filePath: path, name: project.name, motorCount: project.motors.length, updatedAt: project.updatedAt })
+      return path
+    } else {
+      const result = await window.api.saveProjectAs(data, project.name)
+      if (result.success && result.filePath) {
+        await window.api.addRecentProject({ filePath: result.filePath, name: project.name, motorCount: project.motors.length, updatedAt: project.updatedAt })
+        return result.filePath
+      }
+      return null
+    }
+  }
+
+  async function handleSaveProject(): Promise<void> {
+    if (!activeProject) return
+    setIsSaving(true)
+    const synced = activeMotorId ? syncMotorToProject(activeProject, activeMotorId) : { ...activeProject, updatedAt: new Date().toISOString() }
+    setActiveProject(synced)
+    const savedPath = await saveProject(synced, activeProjectPath)
+    if (savedPath) setActiveProjectPath(savedPath)
+    setIsSaving(false)
+  }
+
+  function handleSelectMotor(motorId: string): void {
+    if (motorId === activeMotorId) return
+    // Sync current motor before switching
+    if (activeProject && activeMotorId) {
+      setActiveProject(prev => prev ? syncMotorToProject(prev, activeMotorId) : prev)
+    }
+    setActiveMotorId(motorId)
+    const motor = activeProject?.motors.find(m => m.id === motorId)
+    if (motor) loadMotor(motor)
+  }
+
+  function handleAddMotor(motor: MotorProfile): void {
+    if (!activeProject) return
+    const updated = { ...activeProject, motors: [...activeProject.motors, motor], updatedAt: new Date().toISOString() }
+    setActiveProject(updated)
+    setActiveMotorId(motor.id)
+    loadMotor(motor)
+  }
+
+  function openAddMotorModal(): void {
+    setConfigMotorId(null)
+    setMotorConfigDraft(defaultMotorProfile('New Motor'))
+    setShowMotorConfig(true)
+  }
+
+  function openConfigureMotorModal(id: string): void {
+    const motor = activeProject?.motors.find(m => m.id === id)
+    if (!motor) return
+    setConfigMotorId(id)
+    setMotorConfigDraft({ ...motor })
+    setShowMotorConfig(true)
+  }
+
+  function handleSaveMotorConfig(motor: MotorProfile): void {
+    setShowMotorConfig(false)
+    if (configMotorId === null) {
+      handleAddMotor(motor)
+    } else {
+      if (activeMotorId === configMotorId) {
+        setMechanism(motor.mechanism)
+        setSetpointDisplay(motor.nominalSetpoint)
+      }
+      setActiveProject(prev => prev ? {
+        ...prev,
+        motors: prev.motors.map(m => m.id === configMotorId ? motor : m),
+        updatedAt: new Date().toISOString(),
+      } : prev)
+    }
+    setMotorConfigDraft(null)
+    setConfigMotorId(null)
+  }
+
+  function handleRenameProject(name: string): void {
+    setActiveProject(prev => prev ? { ...prev, name, updatedAt: new Date().toISOString() } : prev)
+  }
+
+  function handleRenameMotor(id: string, name: string): void {
+    setActiveProject(prev => prev ? {
+      ...prev,
+      motors: prev.motors.map(m => m.id === id ? { ...m, name } : m)
+    } : prev)
+  }
+
+  function handleDeleteMotor(id: string): void {
+    if (!activeProject) return
+    const remaining = activeProject.motors.filter(m => m.id !== id)
+    setActiveProject({ ...activeProject, motors: remaining, updatedAt: new Date().toISOString() })
+    if (activeMotorId === id) {
+      if (remaining.length > 0) {
+        setActiveMotorId(remaining[0].id)
+        loadMotor(remaining[0])
+      } else {
+        setActiveMotorId(null)
+        resetTunerState()
+      }
+    }
+  }
+
+  function openProjectData(filePath: string, data: string): void {
+    try {
+      const project = JSON.parse(data) as Project
+      setActiveProject(project)
+      setActiveProjectPath(filePath)
+      setAppView('project')
+      if (project.motors.length > 0) {
+        setActiveMotorId(project.motors[0].id)
+        loadMotor(project.motors[0])
+      } else {
+        setActiveMotorId(null)
+        resetTunerState()
+      }
+    } catch {}
+  }
+
+  async function handleOpenProject(): Promise<void> {
+    const result = await window.api.openProject()
+    if (result.success && result.filePath && result.data) {
+      openProjectData(result.filePath, result.data)
+    }
+  }
+
+  async function handleOpenRecent(filePath: string): Promise<void> {
+    try {
+      const result = await window.api.openProjectByPath(filePath)
+      if (result.success && result.filePath && result.data) {
+        openProjectData(result.filePath, result.data)
+      } else if (result.notFound) {
+        await window.api.removeRecentProject(filePath)
+      }
+    } catch {}
+  }
+
+  function handleNewProject(name: string): void {
+    const project = defaultProject(name)
+    setActiveProject(project)
+    setActiveProjectPath(null)  // no file yet, will prompt on first save
+    setActiveMotorId(null)
+    resetTunerState()
+    setAppView('project')
+  }
+
+  function handleCloseProject(): void {
+    setActiveProject(null)
+    setActiveProjectPath(null)
+    setActiveMotorId(null)
+    resetTunerState()
+    setAppView('launcher')
+  }
+
+  // ── Tune completion → mark motor as tuned ───────────────────────────────────
+
+  // When auto-tune finishes, check if best score met target → mark motor as tuned
+  useEffect(() => {
+    if (!autoTuneDone || !activeMotorId || !activeProject) return
+    const entries = allEntriesRef.current
+    if (entries.length === 0) return
+    const bestScore = entries.reduce((b, e) => e.metrics.score < b ? e.metrics.score : b, Infinity)
+    const target = autoTuneConfig.targetScore
+    if (bestScore <= target) {
+      setActiveProject(prev => {
+        if (!prev) return null
+        return {
+          ...prev,
+          motors: prev.motors.map(m =>
+            m.id === activeMotorId
+              ? { ...m, tuneStatus: 'tuned' as const, tuneBestScore: bestScore, tuneTargetScore: target, tuneDate: new Date().toISOString() }
+              : m
+          )
+        }
+      })
+    }
+  }, [autoTuneDone])
+
   // ── Derived display values ──────────────────────────────────────────────────
 
   const unitLabel = displayUnitLabel(mechanism)
@@ -479,73 +727,115 @@ export default function App(): JSX.Element {
     progressPct: 0
   }
 
+  if (appView === 'launcher') {
+    return (
+      <div className="app-layout">
+        <Launcher
+          onNewProject={handleNewProject}
+          onOpenProject={handleOpenProject}
+          onOpenRecent={handleOpenRecent}
+          onRemoveRecent={fp => window.api.removeRecentProject(fp)}
+        />
+      </div>
+    )
+  }
+
   return (
-    <div className="app-layout">
-      <div className="panel panel-left">
-        <MechanismPanel
-          mechanism={mechanism}
-          setpoint={setpointDisplay}
-          onMechanismChange={setMechanism}
-          onSetpointChange={setSetpointDisplay}
-          unitLabel={unitLabel}
-        />
-      </div>
+    <>
+      <div className={`app-layout ${activeProject ? 'app-layout-project' : ''}`}>
+        {activeProject && (
+          <div className="panel panel-sidebar">
+            <ProjectSidebar
+              project={activeProject}
+              activeMotorId={activeMotorId}
+              onSelectMotor={handleSelectMotor}
+              onAddMotor={openAddMotorModal}
+              onConfigureMotor={openConfigureMotorModal}
+              onRenameMotor={handleRenameMotor}
+              onDeleteMotor={handleDeleteMotor}
+              onRenameProject={handleRenameProject}
+              onSave={handleSaveProject}
+              onClose={handleCloseProject}
+              isSaving={isSaving}
+            />
+          </div>
+        )}
 
-      <div className="panel panel-center">
-        <StepGraph
-          data={stepData}
-          segmentBoundaries={segmentBoundaries}
-          unitLabel={unitLabel}
-          mechanismType={mechanism.type}
-          metrics={metrics}
-        />
-      </div>
+        <div className="panel panel-left">
+          <MechanismPanel
+            mechanism={mechanism}
+            setpoint={setpointDisplay}
+            onMechanismChange={setMechanism}
+            onSetpointChange={setSetpointDisplay}
+            unitLabel={unitLabel}
+          />
+        </div>
 
-      <div className="panel panel-right">
-        <GainsPanel
-          gains={gains}
-          metrics={metrics}
-          mechanism={mechanism}
-          nominalSetpoint={setpointDisplay}
+        <div className="panel panel-center">
+          <StepGraph
+            data={stepData}
+            segmentBoundaries={segmentBoundaries}
+            unitLabel={unitLabel}
+            mechanismType={mechanism.type}
+            metrics={metrics}
+          />
+        </div>
+
+        <div className="panel panel-right">
+          <GainsPanel
+            gains={gains}
+            metrics={metrics}
+            mechanism={mechanism}
+            nominalSetpoint={setpointDisplay}
+            testCount={testCount}
+            isRunning={isRunning}
+            phaseInfo={phaseInfo}
+            history={history}
+            unitLabel={unitLabel}
+            currentPhase={currentPhase}
+            consecutiveHits={consecutiveHits}
+            phaseExpCount={phaseExpCount}
+            phaseExtCount={phaseExtCount}
+            phaseBestScore={phaseBestScore}
+            autoTuneRunning={autoTuneRunning}
+            autoTuneDone={autoTuneDone}
+            autoTuneFailed={autoTuneFailed}
+            autoTuneConfig={autoTuneConfig}
+            manualRunning={manualRunning}
+            manualRunProgress={manualRunProgress}
+            onGainsChange={setGains}
+            onRunTest={connectionMode === 'sim' ? runSim : startLiveTest}
+            onSuggest={suggestGains}
+            onExport={exportJava}
+            onStartAutoTune={startAutoTune}
+            onStopAutoTune={stopAutoTune}
+            onAcceptTune={acceptTune}
+            onStartManualRun={startManualRun}
+            onStopManualRun={stopManualRun}
+            onAutoTuneConfigChange={setAutoTuneConfig}
+          />
+        </div>
+
+        <StatusBar
+          connectionMode={connectionMode}
+          connectionStatus={connectionStatus}
+          teamNumber={teamNumber}
           testCount={testCount}
-          isRunning={isRunning}
-          phaseInfo={phaseInfo}
-          history={history}
-          unitLabel={unitLabel}
-          currentPhase={currentPhase}
-          consecutiveHits={consecutiveHits}
-          phaseExpCount={phaseExpCount}
-          phaseExtCount={phaseExtCount}
-          phaseBestScore={phaseBestScore}
-          autoTuneRunning={autoTuneRunning}
-          autoTuneDone={autoTuneDone}
-          autoTuneFailed={autoTuneFailed}
-          autoTuneConfig={autoTuneConfig}
-          manualRunning={manualRunning}
-          manualRunProgress={manualRunProgress}
-          onGainsChange={setGains}
-          onRunTest={connectionMode === 'sim' ? runSim : startLiveTest}
-          onSuggest={suggestGains}
-          onExport={exportJava}
-          onStartAutoTune={startAutoTune}
-          onStopAutoTune={stopAutoTune}
-          onAcceptTune={acceptTune}
-          onStartManualRun={startManualRun}
-          onStopManualRun={stopManualRun}
-          onAutoTuneConfigChange={setAutoTuneConfig}
+          onTeamNumberChange={setTeamNumber}
+          onConnect={connectNT4}
+          onDisconnect={disconnectNT4}
+          onSwitchToSim={() => { disconnectNT4(); setConnectionMode('sim') }}
         />
       </div>
 
-      <StatusBar
-        connectionMode={connectionMode}
-        connectionStatus={connectionStatus}
-        teamNumber={teamNumber}
-        testCount={testCount}
-        onTeamNumberChange={setTeamNumber}
-        onConnect={connectNT4}
-        onDisconnect={disconnectNT4}
-        onSwitchToSim={() => { disconnectNT4(); setConnectionMode('sim') }}
-      />
-    </div>
+      {showMotorConfig && motorConfigDraft && (
+        <MotorConfigModal
+          motor={motorConfigDraft}
+          mode={configMotorId === null ? 'add' : 'edit'}
+          onSave={handleSaveMotorConfig}
+          onCancel={() => { setShowMotorConfig(false); setMotorConfigDraft(null); setConfigMotorId(null) }}
+        />
+      )}
+    </>
   )
 }
