@@ -84,9 +84,18 @@ function runStep(
 
   let { omega_mech, theta_mech, v_elev, y_elev } = initPhysics
 
+  // Seed prevError from the actual initial state so the derivative term sees no
+  // false spike on the first PID tick. Initialize pidTimer to PID_DT so the PID
+  // fires on the very first physics step — otherwise voltage stays 0 for 20ms and
+  // back-EMF decelerates the motor, producing the downward spike visible in the graph.
+  const initActualCTRE = siToCTRE(
+    cfg.type === 'flywheel' ? omega_mech :
+    cfg.type === 'arm'      ? theta_mech : y_elev,
+    cfg
+  )
   let integral  = 0
-  let prevError = 0
-  let pidTimer  = 0
+  let prevError = setpointCTRE - initActualCTRE
+  let pidTimer  = PID_DT
   let voltage   = 0
 
   const points: StepResponsePoint[] = []
@@ -395,6 +404,15 @@ function aggregateMetrics(segs: StepMetrics[], steps: TestStep[], mechType: Mech
   const wavg = (fn: (m: StepMetrics) => number) =>
     segs.reduce((s, m, i) => s + fn(m) * weights[i], 0) / totalW
 
+  // score=999 is a sentinel for zero-setpoint or empty segments (rise time / settling
+  // are undefined at setpoint=0). Exclude them from the score average so that structural
+  // zero-RPM steps (start from rest, wind-down) don't inflate the optimizer's objective.
+  const scoreWeights = weights.map((w, i) => segs[i].score >= 999 ? 0 : w)
+  const totalScoreW  = scoreWeights.reduce((s, w) => s + w, 0)
+  const scoreWavg    = totalScoreW > 0
+    ? segs.reduce((s, m, i) => s + m.score * scoreWeights[i], 0) / totalScoreW
+    : 999
+
   // riseTimeS display: show the weighted average, but exclude failed (-1) entries
   const validRise = segs.filter((m, i) => m.riseTimeS >= 0).map((m, i) => ({ v: m.riseTimeS, w: weights[segs.indexOf(m)] }))
   const riseTimeS = validRise.length > 0
@@ -407,7 +425,7 @@ function aggregateMetrics(segs: StepMetrics[], steps: TestStep[], mechType: Mech
     settlingTimeS:    wavg(m => m.settlingTimeS),
     steadyStateError: wavg(m => m.steadyStateError),
     oscillations:     segs.reduce((s, m) => s + m.oscillations, 0),
-    score:            wavg(m => m.score),
+    score:            scoreWavg,
   }
 }
 
@@ -507,6 +525,147 @@ export function phaseLabel(expCount: number): string {
   if (expCount < 8)  return 'Phase 2 — bidirectional'
   if (expCount < 15) return 'Phase 3 — multi-setpoint'
   return 'Phase 4 — full sweep'
+}
+
+// ─── Phase 2 sequence generator ───────────────────────────────────────────────
+// Generates a fixed test sequence for the fine-tune phase.
+// The sequence is evenly spaced between minSP and maxSP with a configurable
+// randomization factor. Generated ONCE when Phase 2 starts, then reused for
+// all Phase 2 experiments so the GP can compare runs fairly.
+
+export function generatePhase2Sequence(
+  mechType: MechanismType,
+  minSP: number,
+  maxSP: number,
+  numSetpoints: number,
+  dwellS: number,
+  randomization: number
+): import('../types').TestStep[] {
+  const count = Math.max(2, numSetpoints)
+  const range = maxSP - minSP
+  const S = (v: number) => sp(v, mechType)
+  return Array.from({ length: count }, (_, i) => {
+    const base   = minSP + range * (i / (count - 1))
+    const jitter = (Math.random() - 0.5) * range * randomization
+    const value  = Math.max(minSP, Math.min(maxSP, base + jitter))
+    return { setpointDisplay: S(value), durationS: Math.max(0.3, dwellS) }
+  })
+}
+
+// ─── Phase-progressive sequence generator ────────────────────────────────────
+// Generates a fixed test sequence for a given fine-tune phase (2–6).
+// Each phase runs a harder, more realistic setpoint pattern.
+// Phases 2–5 scale dwell by dwellS; Phase 6 dwells are fixed (match simulation).
+
+export function generatePhaseSequence(
+  mechType: MechanismType,
+  nominalSetpoint: number,
+  phaseNum: number,
+  randomization: number
+): import('../types').TestStep[] {
+  const s = nominalSetpoint
+  const S = (v: number) => sp(v, mechType)
+
+  // Per-phase randomization caps
+  const randCaps = [0, 0, 0.15, 0.12, 0.10, 0.08, 0.05]
+  const rand = Math.min(randomization, randCaps[Math.min(phaseNum, 6)] ?? 0.15)
+
+  function jitter(frac: number, cap: number): number {
+    return frac + (Math.random() - 0.5) * 2 * cap * randomization
+  }
+
+  if (phaseNum <= 2) {
+    // Phase 2: 4-step simple ramp, 1.2s base dwell
+    const fracs = [0.25, 0.50, 0.75, 1.00]
+    return fracs.map(f => ({
+      setpointDisplay: S(s * Math.max(0, Math.min(1.5, jitter(f, rand)))),
+      durationS: 1.2,
+    }))
+  }
+
+  if (phaseNum === 3) {
+    // Phase 3: 8-step ramp with dip-and-recover, 1.0s/0.8s dwell
+    const steps: [number, number][] = [
+      [0.25, 1.0], [0.60, 1.0], [0.45, 0.8], [0.75, 1.0],
+      [0.55, 0.8], [0.85, 1.0], [0.70, 0.8], [1.00, 1.0],
+    ]
+    return steps.map(([f, d]) => ({
+      setpointDisplay: S(s * Math.max(0, Math.min(1.5, jitter(f, rand)))),
+      durationS: d,
+    }))
+  }
+
+  if (phaseNum === 4) {
+    // Phase 4: 16-step aggressive mixed up/down, 0.8s/0.65s dwell
+    const steps: [number, number][] = [
+      [0.20, 0.65], [1.00, 0.8],  [0.30, 0.65], [0.80, 0.8],
+      [0.50, 0.8],  [1.00, 0.8],  [0.40, 0.65], [0.70, 0.8],
+      [0.90, 0.8],  [0.60, 0.8],  [1.00, 0.8],  [0.25, 0.65],
+      [0.85, 0.8],  [0.55, 0.8],  [0.95, 0.8],  [1.00, 0.8],
+    ]
+    return steps.map(([f, d]) => ({
+      setpointDisplay: S(s * Math.max(0, Math.min(1.5, jitter(f, rand)))),
+      durationS: d,
+    }))
+  }
+
+  if (phaseNum === 5) {
+    // Phase 5: 30-step stress test — max→0→max cycles, 0.6s/0.5s dwell
+    const steps: [number, number][] = [
+      // cold start
+      [0.00, 0.5], [1.00, 0.6],
+      // first max→zero→max cycle
+      [0.00, 0.5], [1.00, 0.6], [0.00, 0.5], [1.00, 0.6],
+      // mid-range chaos
+      [0.40, 0.6], [1.00, 0.6], [0.60, 0.6], [0.00, 0.5], [0.80, 0.6], [1.00, 0.6],
+      // second zero cycle with intermediates
+      [0.00, 0.5], [0.50, 0.6], [1.00, 0.6], [0.00, 0.5], [0.70, 0.6], [1.00, 0.6],
+      // descending staircase
+      [0.80, 0.6], [0.60, 0.6], [0.40, 0.6], [0.20, 0.6], [0.00, 0.5],
+      // final ramp
+      [1.00, 0.6], [0.00, 0.5], [1.00, 0.6], [0.00, 0.5], [1.00, 0.6],
+      // hold
+      [1.00, 0.6], [0.00, 0.5],
+    ]
+    // Don't jitter zero-fraction steps — jitter on f=0 creates tiny near-zero targets
+    // (e.g. 7 RPM) where overshoot% becomes meaningless (64% = 4 RPM past a 7 RPM target).
+    return steps.map(([f, d]) => ({
+      setpointDisplay: f === 0 ? S(0) : S(s * Math.max(0, Math.min(1.5, jitter(f, rand)))),
+      durationS: d,
+    }))
+  }
+
+  // Phase 6: ~75-step 2-minute match simulation — fixed dwells, no dwellS scaling
+  // Shooting-on-the-move sections use structural setpoint variation (not random jitter).
+  const p6Steps: [number, number][] = [
+    // AUTO PERIOD (~15s): spin-up, 3 shots, drive away
+    [0.00, 0.8],  [1.00, 1.5],  [0.85, 0.6], [1.00, 0.6], [0.85, 0.6],
+    [1.00, 0.6],  [0.85, 0.6],  [1.00, 0.8], [0.15, 2.0],
+    // EARLY TELEOP SHOTS (~20s): fixed-position shot cluster
+    [1.00, 0.8],  [0.85, 0.5],  [1.00, 0.6], [0.85, 0.5], [1.00, 0.6],
+    [0.85, 0.5],  [1.00, 0.6],  [0.85, 0.5], [1.00, 0.8], [0.20, 1.5],
+    // SHOOTING ON THE MOVE 1 (~15s): camera-correction jitter — structural, not random
+    [0.95, 0.5],  [0.88, 0.4],  [1.00, 0.5], [0.92, 0.4], [0.98, 0.5],
+    [0.86, 0.4],  [1.00, 0.5],  [0.90, 0.4], [0.97, 0.5], [0.84, 0.4],
+    [1.00, 0.5],  [0.93, 0.4],  [0.88, 0.5], [1.00, 0.5], [0.15, 1.5],
+    // MID-MATCH REPOSITIONING (~15s)
+    [0.15, 3.0],  [1.00, 0.8],  [0.85, 0.5], [1.00, 0.6], [0.85, 0.5],
+    [1.00, 0.6],  [0.20, 3.0],
+    // SHOOTING ON THE MOVE 2 (~15s)
+    [0.90, 0.5],  [1.00, 0.4],  [0.87, 0.5], [0.97, 0.4], [1.00, 0.5],
+    [0.91, 0.4],  [0.85, 0.5],  [1.00, 0.4], [0.93, 0.5], [0.88, 0.4],
+    [1.00, 0.5],  [0.95, 0.5],  [0.20, 1.5],
+    // LATE-MATCH PUSH (~20s): urgent full-power shots
+    [1.00, 1.0],  [0.85, 0.5],  [1.00, 0.6], [0.85, 0.5], [1.00, 0.6],
+    [0.85, 0.5],  [1.00, 0.6],  [0.85, 0.5], [1.00, 0.6], [0.85, 0.5],
+    [1.00, 0.6],  [0.85, 0.5],  [1.00, 1.0],
+    // WIND-DOWN (~10s)
+    [0.50, 2.0],  [0.25, 2.0],  [0.00, 3.0],
+  ]
+  return p6Steps.map(([f, d]) => ({
+    setpointDisplay: S(s * f),
+    durationS: d,
+  }))
 }
 
 // ─── Display unit label ───────────────────────────────────────────────────────

@@ -72,6 +72,7 @@ export interface OptimizerEntry {
   segmentMetrics: StepMetrics[] // per-step breakdown
   testIndex: number
   steps: TestStep[]
+  tunePhase: number             // 1=Phase1 exploration, 2+=fine-tune
 }
 
 export interface GainBound {
@@ -80,6 +81,48 @@ export interface GainBound {
 }
 
 export type GainBounds = Record<keyof Gains, GainBound>
+
+// ─── Auto-Tune ────────────────────────────────────────────────────────────────
+// Multi-phase tuning: Phase 1 explores broadly, each subsequent phase narrows
+// the search radius around the best known gains.
+
+export interface AutoTuneConfig {
+  targetScore: number           // stop when N consecutive experiments score below this
+  consecutiveHits: number       // how many consecutive sub-target scores to stop (default 5)
+  numPhases: number             // total phases including Phase 1 (2–6, default 4)
+  p1MaxExperiments: number      // max Phase 1 experiments before advancing (default 30)
+  phaseMaxExperiments: number   // max experiments per fine-tune phase before advancing (default 20)
+  p6MaxExperiments: number      // max experiments for Phase 6 match-test (default 8; sequences are ~2min long)
+  // Search radius per fine-tune phase (fraction of best value, applied ±)
+  // Index 0 = Phase 2, index 1 = Phase 3, … index 4 = Phase 6
+  phaseRadii: number[]          // default [0.20, 0.10, 0.05, 0.025, 0.0125]
+  // Fine-tune sequence parameters (phases 2–5 only; Phase 6 uses fixed match sequence)
+  numSetpoints: number          // legacy — only used by Phase 1 getTestSequence
+  dwellS: number                // scales dwell proportionally for phases 2–5 (1.0 = designed durations)
+  randomization: number         // 0–1 jitter on setpoint spacing (default 0.15; capped per-phase internally)
+  // Phase extension: if best-in-phase score doesn't clear the threshold after phaseMaxExperiments,
+  // run up to phaseExtensionMax extra experiments before failing the auto-tune.
+  phaseThresholds: number[]     // max acceptable score to advance from each phase [p1→2, p2→3, …, p5→6]
+  phaseExtensionMax: number     // max extra experiments per phase before failing (default 50)
+}
+
+export function defaultAutoTuneConfig(nominalSetpoint?: number): AutoTuneConfig {
+  void nominalSetpoint  // kept as param for future min/max setpoint defaults
+  return {
+    targetScore:         2.0,
+    consecutiveHits:     5,
+    numPhases:           6,
+    p1MaxExperiments:    30,
+    phaseMaxExperiments: 20,
+    p6MaxExperiments:    8,
+    phaseRadii:          [0.20, 0.10, 0.05, 0.025, 0.0125],
+    numSetpoints:        6,
+    dwellS:              1.0,
+    randomization:       0.15,
+    phaseThresholds:     [30, 15, 15, 20, 25],
+    phaseExtensionMax:   50,
+  }
+}
 
 // ─── NT4 / Connection ─────────────────────────────────────────────────────────
 

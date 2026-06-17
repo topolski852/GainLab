@@ -8,9 +8,9 @@
   --bg-hover:    #172030;
 
   /* Borders */
-  --border-subtle:  #111c2b;
-  --border-normal:  #1a2d42;
-  --border-accent:  #2a4060;
+  --border-subtle:  #131e2e;
+  --border-normal:  #2a4262;
+  --border-accent:  #3a5a7c;
 
   /* Team 1507 — Blue & Gold */
   --blue:         #1d4ed8;
@@ -25,8 +25,8 @@
 
   /* Semantic */
   --text-primary:   #d4dce8;
-  --text-secondary: #5c7088;
-  --text-muted:     #2e4055;
+  --text-secondary: #8aaac8;
+  --text-muted:     #5a7898;
   --success:        #22c55e;
   --error:          #ef4444;
 
@@ -173,9 +173,9 @@ body::before {
 }
 
 .section-label {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.10em;
   text-transform: uppercase;
   color: var(--text-muted);
   padding: 8px 14px 4px;
@@ -196,8 +196,8 @@ body::before {
 }
 
 .field-label {
-  font-size: 11px;
-  color: var(--text-secondary);
+  font-size: 12px;
+  color: var(--text-primary);
 }
 
 .field-row {
@@ -207,8 +207,8 @@ body::before {
 }
 
 .field-unit {
-  font-size: 10px;
-  color: var(--text-muted);
+  font-size: 11px;
+  color: var(--text-secondary);
   font-family: var(--font-mono);
   min-width: 24px;
 }
@@ -338,8 +338,8 @@ body::before {
   padding: 2px 0;
 }
 
-.info-key { color: var(--text-muted); }
-.info-val { color: var(--text-secondary); font-family: var(--font-mono); }
+.info-key { color: var(--text-secondary); font-size: 12px; }
+.info-val { color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; }
 
 /* ── Mechanism panel ──────────────────────────────────────────────────────────── */
 .mechanism-panel {
@@ -364,15 +364,15 @@ body::before {
 }
 
 .motor-stat-key {
-  color: var(--text-muted);
-  font-size: 10px;
-  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  font-size: 11px;
+  letter-spacing: 0.02em;
 }
 
 .motor-stat-val {
   font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-secondary);
+  font-size: 12px;
+  color: var(--text-primary);
 }
 
 .stat-foc  { color: var(--blue-bright) !important; }
@@ -382,9 +382,10 @@ body::before {
   margin-top: 5px;
   padding-top: 5px;
   border-top: 1px solid var(--border-subtle);
-  font-size: 9px;
-  color: var(--gold-dim);
-  letter-spacing: 0.02em;
+  font-size: 10px;
+  color: var(--gold-bright);
+  opacity: 0.65;
+  letter-spacing: 0.01em;
 }
 
 .motor-trap-warning {
@@ -411,6 +412,12 @@ body::before {
   min-height: 0;
   padding: 12px 6px 4px 0;
   background: var(--bg-base);
+  cursor: crosshair;
+  user-select: none;
+}
+
+.chart-selecting {
+  user-select: none;
 }
 
 .chart-empty {
@@ -556,8 +563,8 @@ body::before {
 
 .gain-unit {
   font-family: var(--font-mono);
-  font-size: 9px;
-  color: var(--text-muted);
+  font-size: 10px;
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -584,7 +591,7 @@ body::before {
 .metric-list-row:last-child { border-bottom: none; }
 
 .metric-list-label {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-secondary);
 }
 
@@ -1041,13 +1048,13 @@ body::before {
 
 .phase-exp-count {
   font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-muted);
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 
 .phase-description {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 10px;
   color: var(--text-secondary);
   margin-bottom: 6px;
 }
@@ -1087,91 +1094,45 @@ body::before {
   margin-left: 8px;
 }
 
-/* ── Auto-run ────────────────────────────────────────────────────────────────── */
-.auto-run-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.auto-run-label {
+/* Graph zoom reset button */
+.btn-reset-zoom {
+  margin-left: auto;
   font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-}
-
-.auto-run-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.auto-run-input {
-  width: 56px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-normal);
-  border-radius: var(--chamfer-sm);
-  color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 4px 6px;
-  text-align: center;
-}
-
-.auto-run-input:focus {
-  outline: none;
-  border-color: var(--blue-bright);
-}
-
-.auto-run-unit {
-  font-size: 11px;
-  color: var(--text-secondary);
-  flex: 1;
-}
-
-.btn-auto-run {
-  padding: 5px 12px;
-  background: rgba(59, 130, 246, 0.12);
-  border: 1px solid var(--blue-dim);
-  border-radius: var(--chamfer-sm);
   color: var(--blue-bright);
-  font-size: 11px;
-  font-weight: 600;
+  background: rgba(59, 130, 246, 0.10);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 3px;
+  padding: 2px 8px;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s;
+}
+.btn-reset-zoom:hover {
+  background: rgba(59, 130, 246, 0.20);
 }
 
-.btn-auto-run:hover:not(:disabled) {
-  background: var(--blue-glow);
-  border-color: var(--blue-bright);
-}
-
-.btn-auto-run:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.auto-run-active {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 10px;
-  background: rgba(59, 130, 246, 0.08);
-  border: 1px solid var(--blue-dim);
-  border-radius: var(--chamfer-sm);
-}
-
-.auto-run-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--blue-bright);
+/* Time marker elapsed-time badge in graph header */
+.marker-delta {
   font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--gold-bright);
+  background: rgba(240, 180, 41, 0.10);
+  border: 1px solid rgba(240, 180, 41, 0.25);
+  border-radius: 3px;
+  padding: 2px 8px;
+  margin-left: 8px;
+  letter-spacing: 0.02em;
 }
 
+/* Δt row inside the chart tooltip */
+.tooltip-delta {
+  color: var(--gold-bright) !important;
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 3px;
+  padding-top: 3px;
+}
+
+/* ── Shared run spinners / stop ──────────────────────────────────────────────── */
 .auto-run-spinner {
   display: inline-block;
   width: 8px;
@@ -1192,11 +1153,368 @@ body::before {
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s;
+  white-space: nowrap;
 }
 
-.btn-stop:hover {
-  background: rgba(239, 68, 68, 0.2);
+.btn-stop:hover { background: rgba(239, 68, 68, 0.2); }
+.btn-stop.btn-sm { padding: 3px 8px; font-size: 10px; }
+
+/* ── Phase badges P1–P5 ──────────────────────────────────────────────────────── */
+.phase-badge.phase-p1 {
+  background: var(--blue-glow);
+  color: var(--blue-bright);
+  border-color: var(--blue-dim);
 }
+.phase-badge.phase-p2 {
+  background: rgba(240, 180, 41, 0.18);
+  color: var(--gold-bright);
+  border-color: var(--gold-dim);
+}
+.phase-badge.phase-p3 {
+  background: rgba(240, 150, 41, 0.18);
+  color: #f0a529;
+  border-color: rgba(240, 150, 41, 0.3);
+}
+.phase-badge.phase-p4 {
+  background: rgba(240, 120, 41, 0.18);
+  color: #f08029;
+  border-color: rgba(240, 120, 41, 0.3);
+}
+.phase-badge.phase-p5 {
+  background: rgba(240, 90, 41, 0.18);
+  color: #f06029;
+  border-color: rgba(240, 90, 41, 0.3);
+}
+.phase-badge.phase-p6 {
+  background: rgba(139, 92, 246, 0.18);
+  color: #a78bfa;
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+/* ── Tune status section ─────────────────────────────────────────────────────── */
+.tune-status-section {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.tune-status-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tune-phase-badges {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.tune-progress-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.tune-progress-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tune-progress-frac {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.tune-progress-track {
+  height: 4px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.tune-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.tune-progress-fill.phase-fill  { background: var(--blue-bright); }
+.tune-progress-fill.hits-fill   { background: var(--gold-bright); }
+.tune-progress-fill.hits-done   { background: var(--success); }
+
+.tune-best-score {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.tune-done-banner {
+  padding: 5px 8px;
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  border-radius: var(--chamfer-sm);
+  color: var(--success);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.tune-failed-banner {
+  padding: 5px 8px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--chamfer-sm);
+  color: #f87171;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+/* ── Auto-Tune idle controls ─────────────────────────────────────────────────── */
+.at-idle-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.at-config-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 6px;
+}
+
+.at-config-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.at-config-input {
+  width: 60px;
+  padding: 3px 5px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-normal);
+  border-radius: var(--chamfer-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: right;
+}
+
+.at-config-input.at-config-input-sm { width: 40px; }
+
+.at-config-input:focus {
+  outline: none;
+  border-color: var(--gold-dim);
+}
+
+.at-config-unit {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.at-advanced-toggle {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  padding: 2px 0;
+  text-align: left;
+  transition: color 0.15s;
+  letter-spacing: 0.03em;
+}
+.at-advanced-toggle:hover { color: var(--text-primary); }
+
+.at-advanced-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--chamfer-sm);
+}
+
+.at-adv-row {
+  display: grid;
+  grid-template-columns: 1fr 60px auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.at-adv-row label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.at-adv-row input[type="number"] {
+  width: 100%;
+  padding: 2px 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-normal);
+  border-radius: var(--chamfer-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: right;
+}
+
+.at-adv-row input[type="number"]:focus {
+  outline: none;
+  border-color: var(--gold-dim);
+}
+
+.at-adv-unit {
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  min-width: 30px;
+}
+
+.btn-autotune {
+  width: 100%;
+  padding: 9px 12px;
+  background: rgba(240, 180, 41, 0.10);
+  border: 1px solid var(--gold-dim);
+  border-radius: var(--chamfer-sm);
+  color: var(--gold-bright);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.btn-autotune:hover:not(:disabled) {
+  background: rgba(240, 180, 41, 0.18);
+  border-color: var(--gold);
+  box-shadow: 0 0 8px rgba(240, 180, 41, 0.15);
+}
+
+.btn-autotune:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ── Auto-Tune running controls ──────────────────────────────────────────────── */
+.at-running-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: rgba(240, 180, 41, 0.06);
+  border: 1px solid rgba(240, 180, 41, 0.2);
+  border-radius: var(--chamfer-sm);
+}
+
+.at-running-label {
+  font-size: 11px;
+  color: var(--gold-bright);
+  font-family: var(--font-mono);
+}
+
+.at-running-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.btn-accept {
+  flex: 1;
+  padding: 5px 8px;
+  background: rgba(34, 197, 94, 0.10);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: var(--chamfer-sm);
+  color: var(--success);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-accept:hover { background: rgba(34, 197, 94, 0.18); }
+
+/* ── Manual controls ─────────────────────────────────────────────────────────── */
+.manual-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.manual-top-row {
+  display: flex;
+  gap: 5px;
+}
+
+.btn.btn-sm {
+  padding: 5px 8px;
+  font-size: 10px;
+}
+
+.manual-run-active {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.manual-run-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.manual-run-input {
+  width: 52px;
+  padding: 3px 5px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-normal);
+  border-radius: var(--chamfer-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: center;
+}
+
+.manual-run-input:focus { outline: none; border-color: var(--blue-bright); }
+
+.manual-run-unit {
+  font-size: 10px;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+/* ── History phase dividers ──────────────────────────────────────────────────── */
+.history-phase-divider {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  padding: 3px 0 1px;
+  border-top: 1px solid var(--border-normal);
+  margin-top: 2px;
+}
+
+.history-phase-tag {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  min-width: 14px;
+}
+
+.history-phase-tag.fine-tune { color: var(--gold-dim); }
 
 /* ── Recharts overrides ───────────────────────────────────────────────────────── */
 .recharts-cartesian-axis-tick-value { fill: var(--text-muted); font-size: 11px; }

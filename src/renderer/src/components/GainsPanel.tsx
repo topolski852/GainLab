@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Gains, StepMetrics, MechanismConfig, OptimizerEntry, PhaseInfo } from '../types'
+import { Gains, StepMetrics, MechanismConfig, OptimizerEntry, PhaseInfo, AutoTuneConfig } from '../types'
 import { MOTORS } from '../physics/motors'
 import { displayUnitLabel } from '../physics/simulator'
 
@@ -12,14 +12,31 @@ interface Props {
   isRunning: boolean
   phaseInfo: PhaseInfo
   history: OptimizerEntry[]
-  autoRunning: boolean
-  autoRunProgress: { done: number; total: number }
+  unitLabel: string
+  // Auto-tune
+  currentPhase: number
+  consecutiveHits: number
+  phaseExpCount: number
+  phaseExtCount: number
+  phaseBestScore: number
+  autoTuneRunning: boolean
+  autoTuneDone: boolean
+  autoTuneFailed: boolean
+  autoTuneConfig: AutoTuneConfig
+  // Manual run
+  manualRunning: boolean
+  manualRunProgress: { done: number; total: number }
+  // Callbacks
   onGainsChange: (g: Gains) => void
   onRunTest: () => void
   onSuggest: () => void
   onExport: () => void
-  onStartAutoRun: (n: number) => void
-  onStopAutoRun: () => void
+  onStartAutoTune: () => void
+  onStopAutoTune: () => void
+  onAcceptTune: () => void
+  onStartManualRun: (n: number) => void
+  onStopManualRun: () => void
+  onAutoTuneConfigChange: (cfg: AutoTuneConfig) => void
 }
 
 const GAIN_DEFS: { key: keyof Gains; label: string; unit: string; step: number; min: number }[] = [
@@ -52,6 +69,17 @@ function fmtTime(s: number): string {
 
 function fmtPct(v: number): string { return v.toFixed(1) + '%' }
 
+function phaseTag(p: number): string {
+  if (p <= 0) return '—'
+  if (p === 1) return 'P1'
+  return `P${p}`
+}
+
+function phaseBadgeClass(p: number): string {
+  if (p <= 1) return 'phase-badge phase-p1'
+  return `phase-badge phase-p${Math.min(p, 6)}`
+}
+
 // ─── Log formatter ────────────────────────────────────────────────────────────
 
 function buildLog(history: OptimizerEntry[], mechanism: MechanismConfig, nominalSetpoint: number): string {
@@ -77,11 +105,11 @@ function buildLog(history: OptimizerEntry[], mechanism: MechanismConfig, nominal
   ].join('\n')
 
   const entries = history.map(entry => {
-    const { gains, metrics, segmentMetrics, steps, testIndex } = entry
-    const isBest = bestEntry?.testIndex === testIndex
+    const { gains, metrics, segmentMetrics, steps, testIndex, tunePhase } = entry
+    const isBest    = bestEntry?.testIndex === testIndex
+    const phaseStr  = tunePhase > 1 ? ` [Phase ${tunePhase}]` : ''
 
     const gainsLine = `  Gains : kP=${gains.kP.toFixed(4)}  kI=${gains.kI.toFixed(4)}  kD=${gains.kD.toFixed(4)}  kS=${gains.kS.toFixed(4)}  kV=${gains.kV.toFixed(4)}  kA=${gains.kA.toFixed(4)}  kG=${gains.kG.toFixed(4)}`
-
     const stepsLine = `  Steps : ${steps.map(s => `${s.setpointDisplay} ${unitLabel} × ${s.durationS}s`).join('  →  ')}`
 
     const aggLine = [
@@ -110,7 +138,7 @@ function buildLog(history: OptimizerEntry[], mechanism: MechanismConfig, nominal
         })
       : []
 
-    return [`Test #${testIndex + 1}`, gainsLine, stepsLine, ...segLines, aggLine].join('\n')
+    return [`Test #${testIndex + 1}${phaseStr}`, gainsLine, stepsLine, ...segLines, aggLine].join('\n')
   })
 
   const best = bestEntry ? [
@@ -127,14 +155,20 @@ function buildLog(history: OptimizerEntry[], mechanism: MechanismConfig, nominal
 
 export default function GainsPanel({
   gains, metrics, mechanism, nominalSetpoint, testCount, isRunning,
-  phaseInfo, history, autoRunning, autoRunProgress,
-  onGainsChange, onRunTest, onSuggest, onExport, onStartAutoRun, onStopAutoRun
+  phaseInfo, history, unitLabel,
+  currentPhase, consecutiveHits, phaseExpCount, phaseExtCount, phaseBestScore,
+  autoTuneRunning, autoTuneDone, autoTuneFailed, autoTuneConfig,
+  manualRunning, manualRunProgress,
+  onGainsChange, onRunTest, onSuggest, onExport,
+  onStartAutoTune, onStopAutoTune, onAcceptTune,
+  onStartManualRun, onStopManualRun, onAutoTuneConfigChange
 }: Props): JSX.Element {
 
-  const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle')
-  const [autoRunCount, setAutoRunCount] = useState(20)
+  const [copyState, setCopyState]       = useState<'idle' | 'copied'>('idle')
+  const [manualCount, setManualCount]   = useState(20)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
 
-  const showKG = mechanism.type === 'arm' || mechanism.type === 'elevator'
+  const showKG     = mechanism.type === 'arm' || mechanism.type === 'elevator'
   const visibleGains = GAIN_DEFS.filter(g => g.key !== 'kG' || showKG)
 
   function setGain(key: keyof Gains, val: string): void {
@@ -142,11 +176,43 @@ export default function GainsPanel({
     if (!isNaN(n)) onGainsChange({ ...gains, [key]: n })
   }
 
+  function setCfgField(field: keyof AutoTuneConfig, val: string): void {
+    const n = parseFloat(val)
+    if (!isNaN(n)) onAutoTuneConfigChange({ ...autoTuneConfig, [field]: n })
+  }
+
+  function setPhaseRadius(idx: number, val: string): void {
+    const n = parseFloat(val)
+    if (isNaN(n)) return
+    const next = [...autoTuneConfig.phaseRadii]
+    next[idx] = n
+    onAutoTuneConfigChange({ ...autoTuneConfig, phaseRadii: next })
+  }
+
+  function setPhaseThreshold(idx: number, val: string): void {
+    const n = parseFloat(val)
+    if (isNaN(n)) return
+    const next = [...autoTuneConfig.phaseThresholds]
+    next[idx] = n
+    onAutoTuneConfigChange({ ...autoTuneConfig, phaseThresholds: next })
+  }
+
   const bestEntry = history.length > 0
     ? history.reduce((b, e) => e.metrics.score < b.metrics.score ? e : b)
     : null
 
-  const isStructured = phaseInfo.phase === 'structured'
+  const isStructured     = phaseInfo.phase === 'structured'
+  const anyRunning       = autoTuneRunning || manualRunning
+  const atTargetScore    = consecutiveHits >= autoTuneConfig.consecutiveHits
+
+  // Phase progress within current phase
+  const phaseMax    = currentPhase === 1
+    ? autoTuneConfig.p1MaxExperiments
+    : currentPhase >= 6
+      ? autoTuneConfig.p6MaxExperiments
+      : autoTuneConfig.phaseMaxExperiments
+  const phasePct    = currentPhase > 0 ? Math.min(100, (phaseExpCount / phaseMax) * 100) : 0
+  const hitsPct     = Math.min(100, (consecutiveHits / autoTuneConfig.consecutiveHits) * 100)
 
   function copyLog(): void {
     if (history.length === 0) return
@@ -181,35 +247,220 @@ export default function GainsPanel({
 
       <div className="section-divider" />
 
-      {/* Optimizer phase indicator */}
-      <div className="phase-indicator">
-        <div className="phase-header">
-          <span className={`phase-badge ${isStructured ? 'phase-structured' : 'phase-ucb'}`}>
-            {phaseInfo.label}
-          </span>
+      {/* ── Phase status ─────────────────────────────────────────────────── */}
+      <div className="tune-status-section">
+        <div className="tune-status-header">
+          <div className="tune-phase-badges">
+            {currentPhase > 0 && (
+              <span className={phaseBadgeClass(currentPhase)}>
+                {phaseTag(currentPhase)}
+              </span>
+            )}
+            <span className={`phase-badge ${isStructured ? 'phase-structured' : 'phase-ucb'}`}>
+              {phaseInfo.label}
+            </span>
+          </div>
           <span className="phase-exp-count">{testCount} exp</span>
         </div>
         <div className="phase-description">{phaseInfo.description}</div>
-        <div className="phase-progress-track">
-          <div
-            className={`phase-progress-fill ${isStructured ? 'phase-structured' : 'phase-ucb'}`}
-            style={{ width: `${phaseInfo.progressPct}%` }}
-          />
-        </div>
+
+        {currentPhase > 0 && (
+          <>
+            {/* Phase progress */}
+            <div className="tune-progress-row">
+              <span className="tune-progress-label">
+                {currentPhase === 1 ? 'Exploration' : `Phase ${currentPhase} refinement`}
+              </span>
+              <span className="tune-progress-frac">{phaseExpCount} / {phaseMax}</span>
+            </div>
+            <div className="tune-progress-track">
+              <div className="tune-progress-fill phase-fill" style={{ width: `${phasePct}%` }} />
+            </div>
+
+            {/* Consecutive hits toward target */}
+            <div className="tune-progress-row" style={{ marginTop: 6 }}>
+              <span className="tune-progress-label">
+                Score &lt; {autoTuneConfig.targetScore} consecutive
+              </span>
+              <span className="tune-progress-frac"
+                style={atTargetScore ? { color: 'var(--success)' } : undefined}>
+                {consecutiveHits} / {autoTuneConfig.consecutiveHits}
+              </span>
+            </div>
+            <div className="tune-progress-track">
+              <div
+                className={`tune-progress-fill hits-fill ${atTargetScore ? 'hits-done' : ''}`}
+                style={{ width: `${hitsPct}%` }}
+              />
+            </div>
+
+            {bestEntry && (
+              <div className="tune-best-score">
+                Best: <span style={{ color: scoreColor(bestEntry.metrics.score) }}>
+                  {bestEntry.metrics.score.toFixed(2)}
+                </span>
+                {bestEntry.metrics.score < autoTuneConfig.targetScore && (
+                  <span style={{ color: 'var(--success)', marginLeft: 4 }}>✓ target</span>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Done banner */}
+        {autoTuneDone && (
+          <div className="tune-done-banner">
+            {atTargetScore
+              ? `✓ Target score ${autoTuneConfig.targetScore} reached`
+              : '✓ All phases complete — using best gains'}
+          </div>
+        )}
+
+        {/* Failed banner */}
+        {autoTuneFailed && (
+          <div className="tune-failed-banner">
+            Phase {currentPhase} failed — best score {phaseBestScore < Infinity ? phaseBestScore.toFixed(2) : '—'} did not reach threshold {autoTuneConfig.phaseThresholds[Math.min(currentPhase - 1, autoTuneConfig.phaseThresholds.length - 1)] ?? '—'} after {autoTuneConfig.phaseExtensionMax} extra experiments
+          </div>
+        )}
       </div>
 
       <div className="section-divider" />
 
-      {/* Results */}
+      {/* ── Auto-Tune controls ────────────────────────────────────────────── */}
+      {autoTuneRunning ? (
+        <div className="at-running-controls">
+          <div className="at-running-label">
+            {currentPhase === 1
+              ? `Phase 1 — exploring…`
+              : phaseExtCount > 0
+                ? `Phase ${currentPhase} — extending (${phaseExtCount}/${autoTuneConfig.phaseExtensionMax} extra)…`
+                : `Phase ${currentPhase} — refining (±${((autoTuneConfig.phaseRadii[currentPhase - 2] ?? 0.05) * 100).toFixed(0)}%)…`}
+          </div>
+          <div className="at-running-buttons">
+            <button className="btn btn-accept" onClick={onAcceptTune}>✓ Accept</button>
+            <button className="btn btn-stop"   onClick={onStopAutoTune}>■ Stop</button>
+          </div>
+        </div>
+      ) : (
+        <div className="at-idle-controls">
+          <div className="at-config-row">
+            <label className="at-config-label">Target score</label>
+            <input
+              type="number"
+              className="at-config-input"
+              value={autoTuneConfig.targetScore}
+              min={0.1}
+              step={0.1}
+              onChange={e => setCfgField('targetScore', e.target.value)}
+            />
+            <span className="at-config-unit">× {autoTuneConfig.consecutiveHits} in a row</span>
+          </div>
+          <div className="at-config-row">
+            <label className="at-config-label">Phases</label>
+            <input
+              type="number"
+              className="at-config-input at-config-input-sm"
+              value={autoTuneConfig.numPhases}
+              min={2}
+              max={6}
+              step={1}
+              onChange={e => setCfgField('numPhases', e.target.value)}
+            />
+            <span className="at-config-unit">total (P1 + {autoTuneConfig.numPhases - 1} fine-tune)</span>
+          </div>
+
+          {/* Advanced config (collapsible) */}
+          <button className="at-advanced-toggle" onClick={() => setAdvancedOpen(o => !o)}>
+            {advancedOpen ? '▾' : '▸'} Advanced
+          </button>
+          {advancedOpen && (
+            <div className="at-advanced-grid">
+              <div className="at-adv-row">
+                <label>Consecutive hits</label>
+                <input type="number" value={autoTuneConfig.consecutiveHits} min={1} max={20} step={1}
+                  onChange={e => setCfgField('consecutiveHits', e.target.value)} />
+              </div>
+              <div className="at-adv-row">
+                <label>P1 max experiments</label>
+                <input type="number" value={autoTuneConfig.p1MaxExperiments} min={7} max={100} step={1}
+                  onChange={e => setCfgField('p1MaxExperiments', e.target.value)} />
+              </div>
+              <div className="at-adv-row">
+                <label>Phase N max experiments</label>
+                <input type="number" value={autoTuneConfig.phaseMaxExperiments} min={5} max={60} step={1}
+                  onChange={e => setCfgField('phaseMaxExperiments', e.target.value)} />
+              </div>
+              {autoTuneConfig.numPhases >= 6 && (
+                <div className="at-adv-row">
+                  <label>Phase 6 max experiments</label>
+                  <input type="number" value={autoTuneConfig.p6MaxExperiments} min={2} max={30} step={1}
+                    onChange={e => setCfgField('p6MaxExperiments', e.target.value)} />
+                </div>
+              )}
+              {[2, 3, 4, 5, 6].slice(0, autoTuneConfig.numPhases - 1).map((pn, i) => (
+                <div key={pn} className="at-adv-row">
+                  <label>Phase {pn} radius</label>
+                  <input type="number" value={autoTuneConfig.phaseRadii[i] ?? 0.05}
+                    min={0.01} max={0.5} step={0.01}
+                    onChange={e => setPhaseRadius(i, e.target.value)} />
+                  <span className="at-adv-unit">± {((autoTuneConfig.phaseRadii[i] ?? 0.05) * 100).toFixed(0)}%</span>
+                </div>
+              ))}
+              <div className="at-adv-row">
+                <label>Fine-tune setpoints</label>
+                <input type="number" value={autoTuneConfig.numSetpoints} min={2} max={16} step={1}
+                  onChange={e => setCfgField('numSetpoints', e.target.value)} />
+              </div>
+              <div className="at-adv-row">
+                <label>Dwell time</label>
+                <input type="number" value={autoTuneConfig.dwellS} min={0.3} max={5} step={0.1}
+                  onChange={e => setCfgField('dwellS', e.target.value)} />
+                <span className="at-adv-unit">s</span>
+              </div>
+              <div className="at-adv-row">
+                <label>Randomization</label>
+                <input type="number" value={autoTuneConfig.randomization} min={0} max={1} step={0.05}
+                  onChange={e => setCfgField('randomization', e.target.value)} />
+              </div>
+              <div className="at-adv-row">
+                <label>Phase extension max</label>
+                <input type="number" value={autoTuneConfig.phaseExtensionMax} min={10} max={200} step={10}
+                  onChange={e => setCfgField('phaseExtensionMax', e.target.value)} />
+                <span className="at-adv-unit">extra experiments</span>
+              </div>
+              {[1, 2, 3, 4, 5].slice(0, Math.min(autoTuneConfig.numPhases - 1, 5)).map((pn, i) => (
+                <div key={`thr${pn}`} className="at-adv-row">
+                  <label>P{pn}→P{pn + 1} threshold</label>
+                  <input type="number" value={autoTuneConfig.phaseThresholds[i] ?? 30} min={1} max={500} step={1}
+                    onChange={e => setPhaseThreshold(i, e.target.value)} />
+                  <span className="at-adv-unit">max score</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button
+            className="btn btn-autotune"
+            onClick={onStartAutoTune}
+            disabled={isRunning || manualRunning}
+          >
+            {autoTuneDone || autoTuneFailed ? '↺ Re-run Auto-Tune' : currentPhase > 0 ? '▶ Resume Auto-Tune' : '★ Auto-Tune'}
+          </button>
+        </div>
+      )}
+
+      <div className="section-divider" />
+
+      {/* ── Results ──────────────────────────────────────────────────────── */}
       <div className="section-label">Results</div>
       {metrics ? (
         <div className="metrics-list">
-          <MetricRow label="Rise Time"     value={fmtTime(metrics.riseTimeS)} />
-          <MetricRow label="Overshoot"     value={fmtPct(metrics.overshootPct)}
+          <MetricRow label="Rise Time" value={fmtTime(metrics.riseTimeS)} />
+          <MetricRow label="Overshoot" value={fmtPct(metrics.overshootPct)}
             color={metrics.overshootPct > 10 ? 'var(--error)' : metrics.overshootPct > 5 ? 'var(--gold-bright)' : 'var(--success)'}
           />
-          <MetricRow label="Settling"      value={fmtTime(metrics.settlingTimeS)} />
-          <MetricRow label="SS Error"      value={metrics.steadyStateError.toFixed(4)} />
+          <MetricRow label="Settling"  value={fmtTime(metrics.settlingTimeS)} />
+          <MetricRow label="SS Error"  value={metrics.steadyStateError.toFixed(4)} />
           <MetricRow label="Oscillations"
             value={metrics.oscillations === 0 ? 'None' : `${metrics.oscillations} crossing${metrics.oscillations !== 1 ? 's' : ''}`}
             color={oscColor(metrics.oscillations)}
@@ -228,73 +479,63 @@ export default function GainsPanel({
 
       <div className="section-divider" />
 
-      {/* Actions */}
-      <div className="action-group">
-        <button
-          className={`btn btn-primary ${isRunning ? 'loading' : ''}`}
-          onClick={onRunTest}
-          disabled={isRunning || autoRunning}
-        >
-          {isRunning ? <><span className="spinner" /> Running…</> : <>▶ Run Test</>}
-        </button>
-
-        <button
-          className="btn btn-secondary"
-          onClick={onSuggest}
-          disabled={isRunning || autoRunning}
-          title={isStructured
-            ? `Suggest next structured kP sweep (${phaseInfo.description})`
-            : 'Suggest gains via Bayesian UCB optimizer'}
-        >
-          ◆ Suggest Next Gains
-        </button>
-
-        <button
-          className="btn btn-export"
-          onClick={onExport}
-          disabled={testCount === 0}
-        >
-          ↗ Export Java
-        </button>
-      </div>
-
-      {/* Auto-run */}
-      <div className="section-divider" />
-      {autoRunning ? (
-        <div className="auto-run-active">
-          <div className="auto-run-status">
-            <span className="auto-run-spinner" />
-            <span>Experiment {autoRunProgress.done + 1} of {autoRunProgress.total}</span>
-          </div>
-          <button className="btn btn-stop" onClick={onStopAutoRun}>■ Stop</button>
+      {/* ── Manual controls ───────────────────────────────────────────────── */}
+      <div className="manual-controls">
+        <div className="manual-top-row">
+          <button
+            className={`btn btn-primary btn-sm ${isRunning ? 'loading' : ''}`}
+            onClick={onRunTest}
+            disabled={anyRunning}
+          >
+            {isRunning ? <><span className="spinner" /> Running…</> : '▶ Run 1'}
+          </button>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={onSuggest}
+            disabled={anyRunning}
+            title="Suggest gains via optimizer"
+          >
+            ◆ Suggest
+          </button>
+          <button
+            className="btn btn-export btn-sm"
+            onClick={onExport}
+            disabled={testCount === 0}
+          >
+            ↗ Export
+          </button>
         </div>
-      ) : (
-        <div className="auto-run-controls">
-          <label className="auto-run-label">Auto-Optimize</label>
-          <div className="auto-run-row">
+
+        {manualRunning ? (
+          <div className="manual-run-active">
+            <span className="auto-run-spinner" />
+            <span>Experiment {manualRunProgress.done + 1} of {manualRunProgress.total}</span>
+            <button className="btn btn-stop btn-sm" onClick={onStopManualRun}>■</button>
+          </div>
+        ) : (
+          <div className="manual-run-row">
             <input
               type="number"
-              className="auto-run-input"
-              value={autoRunCount}
+              className="manual-run-input"
+              value={manualCount}
               min={1}
               max={200}
-              onChange={e => setAutoRunCount(Math.max(1, parseInt(e.target.value) || 1))}
-              title="Number of experiments to run automatically"
+              onChange={e => setManualCount(Math.max(1, parseInt(e.target.value) || 1))}
+              title="Experiments to run"
             />
-            <span className="auto-run-unit">experiments</span>
+            <span className="manual-run-unit">experiments</span>
             <button
-              className="btn btn-auto-run"
-              onClick={() => onStartAutoRun(autoRunCount)}
-              disabled={isRunning}
-              title={`Run ${autoRunCount} experiments automatically`}
+              className="btn btn-secondary btn-sm"
+              onClick={() => onStartManualRun(manualCount)}
+              disabled={isRunning || autoTuneRunning}
             >
-              ▶▶ Run
+              ▶▶ Run N
             </button>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* History */}
+      {/* ── History ───────────────────────────────────────────────────────── */}
       {history.length > 0 && (
         <>
           <div className="section-divider" />
@@ -308,38 +549,73 @@ export default function GainsPanel({
               {copyState === 'copied' ? '✓ Copied' : '⎘ Copy Log'}
             </button>
           </div>
-          <div className="history-list">
-            {[...history].reverse().slice(0, 8).map((entry, i) => {
-              const isBest = bestEntry && entry.metrics.score === bestEntry.metrics.score
-              return (
-                <button
-                  key={entry.testIndex}
-                  className={`history-entry ${isBest ? 'best' : ''}`}
-                  onClick={() => onGainsChange(entry.gains)}
-                  title={`Test #${entry.testIndex + 1} — ${entry.steps.length} step${entry.steps.length !== 1 ? 's' : ''}. Click to restore gains.`}
-                >
-                  <span className="history-index">#{history.length - i}</span>
-                  <div className="history-bar-wrap">
-                    <div
-                      className="history-bar"
-                      style={{ width: `${Math.max(4, 100 - entry.metrics.score * 3)}%` }}
-                    />
-                  </div>
-                  <span className="history-osc" style={{ color: oscColor(entry.metrics.oscillations) }}>
-                    {entry.metrics.oscillations > 0 ? `~${entry.metrics.oscillations}` : '○'}
-                  </span>
-                  <span className="history-score" style={{ color: scoreColor(entry.metrics.score) }}>
-                    {entry.metrics.score.toFixed(1)}
-                  </span>
-                  {isBest && <span className="history-best-tag">best</span>}
-                </button>
-              )
-            })}
-          </div>
+          <HistoryList history={history} bestEntry={bestEntry} onRestoreGains={onGainsChange} />
         </>
       )}
     </div>
   )
+}
+
+// ─── History list with phase dividers ─────────────────────────────────────────
+
+function HistoryList({
+  history,
+  bestEntry,
+  onRestoreGains
+}: {
+  history: OptimizerEntry[]
+  bestEntry: OptimizerEntry | null
+  onRestoreGains: (g: Gains) => void
+}): JSX.Element {
+  const recent = [...history].reverse().slice(0, 10)
+
+  let lastPhase = -1
+  const rows: JSX.Element[] = []
+
+  for (let i = 0; i < recent.length; i++) {
+    const entry   = recent[i]
+    const isBest  = bestEntry && entry.metrics.score === bestEntry.metrics.score
+    const absIdx  = history.length - i
+
+    // Insert phase divider when phase changes
+    if (entry.tunePhase !== lastPhase) {
+      lastPhase = entry.tunePhase
+      rows.push(
+        <div key={`divider-${entry.tunePhase}-${i}`} className="history-phase-divider">
+          {entry.tunePhase === 1 ? 'Phase 1 — Exploration' : `Phase ${entry.tunePhase} — Fine-tune`}
+        </div>
+      )
+    }
+
+    rows.push(
+      <button
+        key={entry.testIndex}
+        className={`history-entry ${isBest ? 'best' : ''}`}
+        onClick={() => onRestoreGains(entry.gains)}
+        title={`Test #${entry.testIndex + 1} — ${entry.steps.length} step${entry.steps.length !== 1 ? 's' : ''}. Click to restore gains.`}
+      >
+        <span className="history-index">#{absIdx}</span>
+        <span className={`history-phase-tag ${entry.tunePhase > 1 ? 'fine-tune' : ''}`}>
+          {phaseTag(entry.tunePhase)}
+        </span>
+        <div className="history-bar-wrap">
+          <div
+            className="history-bar"
+            style={{ width: `${Math.max(4, 100 - entry.metrics.score * 3)}%` }}
+          />
+        </div>
+        <span className="history-osc" style={{ color: oscColor(entry.metrics.oscillations) }}>
+          {entry.metrics.oscillations > 0 ? `~${entry.metrics.oscillations}` : '○'}
+        </span>
+        <span className="history-score" style={{ color: scoreColor(entry.metrics.score) }}>
+          {entry.metrics.score.toFixed(1)}
+        </span>
+        {isBest && <span className="history-best-tag">best</span>}
+      </button>
+    )
+  }
+
+  return <div className="history-list">{rows}</div>
 }
 
 function MetricRow({ label, value, color }: { label: string; value: string; color?: string }): JSX.Element {

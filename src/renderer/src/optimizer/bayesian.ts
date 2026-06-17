@@ -1,4 +1,4 @@
-import { Gains, GainBounds, OptimizerEntry, PhaseInfo, MechanismType } from '../types'
+import { Gains, GainBounds, OptimizerEntry, PhaseInfo, MechanismType, AutoTuneConfig } from '../types'
 
 // ─── Gaussian Process ─────────────────────────────────────────────────────────
 // Squared-exponential (RBF) kernel, Cholesky-based exact inference.
@@ -170,6 +170,38 @@ function randomVec(dim: number): number[] {
   return Array.from({ length: dim }, () => Math.random())
 }
 
+// ─── Phase N bounds narrowing ─────────────────────────────────────────────────
+// Computes a tighter search space centred on the best observed gains.
+// radius: fraction of best value to search ±, e.g. 0.20 = ±20%.
+// For gains near zero the absolute range is used (percentage breaks down near 0).
+
+function narrowedBounds(bestGains: Gains, phase1Bounds: GainBounds, radius: number): GainBounds {
+  const result = {} as GainBounds
+  for (const k of GAIN_KEYS) {
+    const best = bestGains[k]
+    const { min: p1min, max: p1max } = phase1Bounds[k]
+    const p1Range = p1max - p1min
+    if (p1Range <= 0) { result[k] = { min: p1min, max: p1max }; continue }
+    let lo: number, hi: number
+    if (best <= p1Range * 0.03) {
+      // Gain is near zero: use radius×2 fraction of phase-1 range from the floor.
+      // This automatically narrows with each phase (radius 0.2→0.4 range, 0.1→0.2 range…).
+      lo = p1min
+      hi = Math.min(p1max, p1min + p1Range * (radius * 2))
+    } else {
+      // Centre on best ± radius, clamp to phase-1 bounds
+      lo = Math.max(p1min, best * (1 - radius))
+      hi = Math.min(p1max, best * (1 + radius))
+    }
+    result[k] = { min: lo, max: Math.max(lo + 1e-9, hi) }
+  }
+  return result
+}
+
+function gainsInBounds(gains: Gains, bounds: GainBounds): boolean {
+  return GAIN_KEYS.every(k => gains[k] >= bounds[k].min && gains[k] <= bounds[k].max)
+}
+
 // Score cap: clamp extreme outlier scores before fitting the GP so that
 // a single catastrophically bad test (e.g. kP=0.05 giving score=7000) doesn't
 // warp the GP surface and push UCB into re-exploring clearly bad regions.
@@ -184,19 +216,75 @@ export class BayesianOptimizer {
   private mechType: MechanismType
   private dim = GAIN_KEYS.length
   private kpSweep: number[]
+  private isFineTune: boolean
+  private phaseLabel: string
 
-  constructor(bounds: GainBounds, mechType: MechanismType = 'flywheel') {
-    this.bounds   = bounds
-    this.mechType = mechType
-    this.kpSweep  = mechType === 'flywheel' ? FLYWHEEL_KP_SWEEP : POSITION_KP_SWEEP
+  constructor(
+    bounds: GainBounds,
+    mechType: MechanismType = 'flywheel',
+    isFineTune = false,
+    phaseLabel = 'Phase 2'
+  ) {
+    this.bounds     = bounds
+    this.mechType   = mechType
+    this.kpSweep    = mechType === 'flywheel' ? FLYWHEEL_KP_SWEEP : POSITION_KP_SWEEP
+    this.isFineTune = isFineTune
+    this.phaseLabel = phaseLabel
   }
+
+  // Create a fine-tune optimizer for a given phase number with narrowed bounds
+  // centred on the best observed gains. Pre-seeded with any history entries that
+  // fall within the new bounds so the GP starts with useful context immediately.
+  // radius: search ± fraction of best value (0.20 = ±20%).
+  static createPhaseN(
+    phaseNum: number,
+    history: OptimizerEntry[],
+    bestGains: Gains,
+    phase1Bounds: GainBounds,
+    mechType: MechanismType,
+    radius: number
+  ): BayesianOptimizer {
+    const phaseBounds = narrowedBounds(bestGains, phase1Bounds, radius)
+    const opt = new BayesianOptimizer(phaseBounds, mechType, true, `Phase ${phaseNum}`)
+    for (const entry of history) {
+      if (gainsInBounds(entry.gains, phaseBounds)) opt.observe(entry)
+    }
+    return opt
+  }
+
+  // Legacy helper kept for backward compatibility
+  static createPhase2(
+    history: OptimizerEntry[],
+    bestGains: Gains,
+    phase1Bounds: GainBounds,
+    mechType: MechanismType
+  ): BayesianOptimizer {
+    return BayesianOptimizer.createPhaseN(2, history, bestGains, phase1Bounds, mechType, 0.20)
+  }
+
+  // Convenience: create the next fine-tune phase from an AutoTuneConfig
+  static createNextPhase(
+    phaseNum: number,
+    history: OptimizerEntry[],
+    bestGains: Gains,
+    phase1Bounds: GainBounds,
+    mechType: MechanismType,
+    cfg: AutoTuneConfig
+  ): BayesianOptimizer {
+    const radiusIdx = phaseNum - 2  // phase 2 → index 0
+    const radius = cfg.phaseRadii[radiusIdx] ?? cfg.phaseRadii[cfg.phaseRadii.length - 1]
+    return BayesianOptimizer.createPhaseN(phaseNum, history, bestGains, phase1Bounds, mechType, radius)
+  }
+
+  get currentBounds(): GainBounds { return this.bounds }
 
   // quality = −score (higher = better), GP maximizes quality.
   // Scores are clamped before fitting so catastrophic outliers don't distort
   // the GP surface and cause UCB to re-explore clearly bad gain regions.
   observe(entry: OptimizerEntry): void {
     this.history.push(entry)
-    if (this.history.length >= STRUCTURED_COUNT) {
+    const minForGP = this.isFineTune ? 2 : STRUCTURED_COUNT
+    if (this.history.length >= minForGP) {
       const X = this.history.map(e => normalize(e.gains, this.bounds))
       const y = this.history.map(e => -Math.min(e.metrics.score, MAX_GP_SCORE))
       this.gp.fit(X, y)
@@ -206,8 +294,8 @@ export class BayesianOptimizer {
   suggest(fixedGains: Partial<Gains> = {}): Gains {
     const n = this.history.length
 
-    // ── Structured phase ──────────────────────────────────────────────────────
-    if (n < STRUCTURED_COUNT) {
+    // ── Structured phase (Phase 1 only) ──────────────────────────────────────
+    if (!this.isFineTune && n < STRUCTURED_COUNT) {
       const base: Gains = {
         kP: this.kpSweep[n],
         kI: 0,
@@ -223,8 +311,11 @@ export class BayesianOptimizer {
     }
 
     // ── UCB phase ─────────────────────────────────────────────────────────────
-    const ucbCount = n - STRUCTURED_COUNT
-    const beta     = getBeta(ucbCount)
+    const ucbCount = n - (this.isFineTune ? 0 : STRUCTURED_COUNT)
+    // Fine-tune phases use much lower beta: mostly exploitation, minimal exploration.
+    const beta = this.isFineTune
+      ? Math.max(0.05, 0.4 * Math.pow(Math.max(0, 1 - ucbCount / 30), 0.5))
+      : getBeta(ucbCount)
     const observed = this.history.map(e => normalize(e.gains, this.bounds))
 
     let bestScore = -Infinity
@@ -264,11 +355,39 @@ export class BayesianOptimizer {
       if (!improved) break
     }
 
-    return { ...denormalize(bestVec, this.bounds), ...fixedGains }
+    // Prevent returning a near-duplicate of an already-observed point. Compare in
+    // actual output gain space AFTER fixedGains overrides — checking raw bestVec
+    // misses duplicates where fixedGains collapses different vectors to identical
+    // output (e.g. kV/kA jitter in bestVec is overridden, leaving kP/kI unchanged).
+    const MIN_SUGGEST_DIST = 0.015
+    const JITTER = 0.06
+    const gainObserved = this.history.map(e => normalize(e.gains, this.bounds))
+
+    const result = { ...denormalize(bestVec, this.bounds), ...fixedGains }
+    if (gainObserved.length > 0 && minDistTo(normalize(result, this.bounds), gainObserved) < MIN_SUGGEST_DIST) {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const jittered = bestVec.map(v => Math.max(0, Math.min(1, v + (Math.random() * 2 - 1) * JITTER)))
+        const jResult = { ...denormalize(jittered, this.bounds), ...fixedGains }
+        if (minDistTo(normalize(jResult, this.bounds), gainObserved) >= MIN_SUGGEST_DIST || attempt === 3) {
+          return jResult
+        }
+      }
+    }
+    return result
   }
 
   getPhaseInfo(): PhaseInfo {
     const n = this.history.length
+    if (this.isFineTune) {
+      const ucbCount = n
+      const beta = Math.max(0.05, 0.4 * Math.pow(Math.max(0, 1 - ucbCount / 30), 0.5)).toFixed(2)
+      return {
+        phase: 'ucb',
+        label: `${this.phaseLabel} — Fine-tune`,
+        description: `β = ${beta}  ·  ${n} experiment${n !== 1 ? 's' : ''}`,
+        progressPct: Math.min(100, (n / 30) * 100)
+      }
+    }
     if (n < STRUCTURED_COUNT) {
       const nextKP = this.kpSweep[n]?.toFixed(3) ?? '—'
       return {

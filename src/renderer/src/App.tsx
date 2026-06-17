@@ -1,6 +1,12 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { MechanismConfig, Gains, AppState, StepResponsePoint, OptimizerEntry, ConnectionStatus, PhaseInfo } from './types'
-import { runMultiStepSimulation, runSimulation, calculateBaselineGains, displayUnitLabel, defaultSetpoint, getTestSequence } from './physics/simulator'
+import {
+  MechanismConfig, Gains, AppState, StepResponsePoint, OptimizerEntry,
+  ConnectionStatus, PhaseInfo, AutoTuneConfig, TestStep, defaultAutoTuneConfig
+} from './types'
+import {
+  runMultiStepSimulation, runSimulation, calculateBaselineGains,
+  displayUnitLabel, defaultSetpoint, getTestSequence, generatePhaseSequence
+} from './physics/simulator'
 import { BayesianOptimizer, defaultBounds } from './optimizer/bayesian'
 import { NT4Client, nt4URL } from './nt4/client'
 import MechanismPanel from './components/MechanismPanel'
@@ -35,44 +41,103 @@ export default function App(): JSX.Element {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected')
   const [teamNumber, setTeamNumber] = useState('1507')
 
-  const optimizerRef = useRef<BayesianOptimizer | null>(null)
-  const nt4Ref = useRef<NT4Client | null>(null)
-  const liveBufferRef = useRef<StepResponsePoint[]>([])
-  const liveStartTimeRef = useRef<number>(0)
+  // ── Auto-Tune state ─────────────────────────────────────────────────────────
+  const [autoTuneRunning, setAutoTuneRunning] = useState(false)
+  const [autoTuneDone, setAutoTuneDone] = useState(false)
+  const [autoTuneFailed, setAutoTuneFailed] = useState(false)
+  const [currentPhase, setCurrentPhase] = useState(0)        // 0=idle,1=P1,2+=fine-tune
+  const [consecutiveHits, setConsecutiveHits] = useState(0)  // consecutive < targetScore
+  const [phaseExpCount, setPhaseExpCount] = useState(0)      // experiments in current phase
+  const [phaseExtCount, setPhaseExtCount] = useState(0)      // extra experiments in extension mode
+  const [phaseBestScore, setPhaseBestScore] = useState(Infinity) // best score within current phase
+  const [autoTuneConfig, setAutoTuneConfig] = useState<AutoTuneConfig>(
+    () => defaultAutoTuneConfig(defaultSetpoint(DEFAULT_MECHANISM))
+  )
+
+  // ── Manual run state ────────────────────────────────────────────────────────
+  const [manualRunning, setManualRunning] = useState(false)
+  const [manualRunProgress, setManualRunProgress] = useState({ done: 0, total: 0 })
+
+  // ── Optimizer refs ──────────────────────────────────────────────────────────
+  const optimizerRef      = useRef<BayesianOptimizer | null>(null)
+  const fineTuneOptRef    = useRef<BayesianOptimizer | null>(null)  // current fine-tune phase
+  const nt4Ref            = useRef<NT4Client | null>(null)
+  const liveBufferRef     = useRef<StepResponsePoint[]>([])
+  const liveStartTimeRef  = useRef<number>(0)
   const liveTestActiveRef = useRef(false)
 
-  // Auto-run: continuously suggest→run without user pressing buttons.
-  const [autoRunning, setAutoRunning] = useState(false)
-  const [autoRunProgress, setAutoRunProgress] = useState({ done: 0, total: 0 })
-  const autoRunDoneRef  = useRef(0)
-  const autoRunTotalRef = useRef(0)
-  const autoRunActiveRef = useRef(false)
-  // Always points to the current runSim closure so auto-run doesn't go stale.
+  // Mutable refs for values that must be readable inside setTimeout callbacks
+  // without causing runSim to be recreated (avoids stale closure issues).
+  const currentPhaseRef      = useRef(0)
+  const consecutiveHitsRef   = useRef(0)
+  const phaseExpCountRef     = useRef(0)
+  const phaseExtCountRef     = useRef(0)
+  const phaseBestScoreRef    = useRef(Infinity)
+  const autoTuneConfigRef    = useRef<AutoTuneConfig>(autoTuneConfig)
+  const autoTuneActiveRef    = useRef(false)
+  const fineTuneSeqRef       = useRef<TestStep[]>([])
+  // Stable history array kept in sync synchronously within runSim (not via setState).
+  const allEntriesRef        = useRef<OptimizerEntry[]>([])
+
+  // Manual run refs
+  const manualActiveRef  = useRef(false)
+  const manualDoneRef    = useRef(0)
+  const manualTotalRef   = useRef(0)
+
+  // Forward ref to latest runSim closure so auto-run always calls the latest version.
   const runSimRef = useRef<() => void>(() => {})
 
-  // Rebuild optimizer when mechanism config changes
+  // Keep config ref in sync
+  useEffect(() => { autoTuneConfigRef.current = autoTuneConfig }, [autoTuneConfig])
+
+  // ── Reset on mechanism change ───────────────────────────────────────────────
   useEffect(() => {
-    optimizerRef.current = new BayesianOptimizer(defaultBounds(mechanism.type), mechanism.type)
+    optimizerRef.current   = new BayesianOptimizer(defaultBounds(mechanism.type), mechanism.type)
+    fineTuneOptRef.current = null
+    fineTuneSeqRef.current = []
+    allEntriesRef.current  = []
+    currentPhaseRef.current      = 0
+    consecutiveHitsRef.current   = 0
+    phaseExpCountRef.current     = 0
+    phaseExtCountRef.current     = 0
+    phaseBestScoreRef.current    = Infinity
+    autoTuneActiveRef.current    = false
+    manualActiveRef.current      = false
+    setCurrentPhase(0)
+    setConsecutiveHits(0)
+    setPhaseExpCount(0)
+    setPhaseExtCount(0)
+    setPhaseBestScore(Infinity)
+    setAutoTuneRunning(false)
+    setAutoTuneDone(false)
+    setAutoTuneFailed(false)
+    setManualRunning(false)
     setHistory([])
     setTestCount(0)
     setStepData([])
     setSegmentBoundaries([])
     setMetrics(null)
-    const newGains = calculateBaselineGains(mechanism)
-    setGains(newGains)
-    setSetpointDisplay(defaultSetpoint(mechanism))
+    setGains(calculateBaselineGains(mechanism))
+    const sp = defaultSetpoint(mechanism)
+    setSetpointDisplay(sp)
+    setAutoTuneConfig(defaultAutoTuneConfig(sp))
   }, [mechanism.type, mechanism.motorType, mechanism.numMotors, mechanism.gearRatio,
       mechanism.massKg, mechanism.radiusM, mechanism.lengthM, mechanism.spoolRadiusM])
 
-  // ── Simulation ──────────────────────────────────────────────────────────────
+  // ── Simulation core ─────────────────────────────────────────────────────────
 
   const runSim = useCallback(() => {
     if (isRunning) return
     setIsRunning(true)
 
     setTimeout(() => {
-      const steps  = getTestSequence(mechanism.type, setpointDisplay, testCount)
-      const result = runMultiStepSimulation(mechanism, gains, steps)
+      const phase        = currentPhaseRef.current
+      const isFineTune   = phase >= 2
+      const activeOpt    = isFineTune ? fineTuneOptRef.current : optimizerRef.current
+      const steps        = isFineTune && fineTuneSeqRef.current.length > 0
+        ? fineTuneSeqRef.current
+        : getTestSequence(mechanism.type, setpointDisplay, testCount)
+      const result       = runMultiStepSimulation(mechanism, gains, steps)
 
       setStepData(result.points)
       setSegmentBoundaries(result.segmentBoundaries)
@@ -84,78 +149,225 @@ export default function App(): JSX.Element {
         segmentMetrics: result.segmentMetrics,
         testIndex:      testCount,
         steps,
+        tunePhase:      Math.max(1, phase),
       }
-      setHistory(prev => [...prev, entry])
+      allEntriesRef.current = [...allEntriesRef.current, entry]
+      setHistory(allEntriesRef.current)
       setTestCount(prev => prev + 1)
-      optimizerRef.current?.observe(entry)
+      activeOpt?.observe(entry)
 
-      // Auto-suggest next gains so repeated "Run Test" clicks try different values.
-      // In simulation there's no variability — re-running the same gains is pointless.
-      if (optimizerRef.current) {
+      // Consecutive-hits tracking and per-phase best score
+      const score = result.aggregateMetrics.score
+      const cfg   = autoTuneConfigRef.current
+      if (score < cfg.targetScore) {
+        consecutiveHitsRef.current += 1
+      } else {
+        consecutiveHitsRef.current = 0
+      }
+      setConsecutiveHits(consecutiveHitsRef.current)
+      if (score < phaseBestScoreRef.current) {
+        phaseBestScoreRef.current = score
+        setPhaseBestScore(score)
+      }
+
+      // Auto-suggest next gains for the next experiment
+      if (activeOpt) {
         const bl = calculateBaselineGains(mechanism)
-        const nextGains = optimizerRef.current.suggest({ kV: bl.kV, kG: bl.kG, kA: bl.kA })
-        setGains(nextGains)
+        setGains(activeOpt.suggest({ kV: bl.kV, kG: bl.kG, kA: bl.kA }))
       }
 
       setIsRunning(false)
 
-      // Auto-run continuation: if an auto-run session is active, schedule the next test.
-      if (autoRunActiveRef.current) {
-        autoRunDoneRef.current += 1
-        const done  = autoRunDoneRef.current
-        const total = autoRunTotalRef.current
-        setAutoRunProgress({ done, total })
+      // ── Auto-Tune continuation ────────────────────────────────────────────
+      if (autoTuneActiveRef.current) {
+        const onLastPhase = phase >= cfg.numPhases
+        const maxExp = phase === 1 ? cfg.p1MaxExperiments : phase >= 6 ? cfg.p6MaxExperiments : cfg.phaseMaxExperiments
+        // phaseThresholds[0] = p1→p2 threshold, [1] = p2→p3, etc.
+        const thresholdIdx = Math.min(phase - 1, cfg.phaseThresholds.length - 1)
+        const phaseThreshold = cfg.phaseThresholds[thresholdIdx] ?? Infinity
+
+        // Advance to the next phase (shared by consecutive-hits fast-forward and maxExp trigger).
+        function advancePhase(): void {
+          const nextPhase = phase + 1
+          const hist      = allEntriesRef.current
+          const bestEntry = hist.reduce((b, e) => e.metrics.score < b.metrics.score ? e : b)
+          const p1Bounds  = optimizerRef.current?.currentBounds ?? defaultBounds(mechanism.type)
+          fineTuneSeqRef.current  = generatePhaseSequence(mechanism.type, setpointDisplay, nextPhase, cfg.randomization)
+          fineTuneOptRef.current  = BayesianOptimizer.createNextPhase(nextPhase, hist, bestEntry.gains, p1Bounds, mechanism.type, cfg)
+          currentPhaseRef.current = nextPhase
+          setCurrentPhase(nextPhase)
+          consecutiveHitsRef.current = 0
+          setConsecutiveHits(0)
+          phaseExpCountRef.current = 0
+          setPhaseExpCount(0)
+          phaseExtCountRef.current = 0
+          setPhaseExtCount(0)
+          phaseBestScoreRef.current = Infinity
+          setPhaseBestScore(Infinity)
+        }
+
+        // Consecutive hits: fast-forward to next phase, or finish if on the last phase.
+        if (consecutiveHitsRef.current >= cfg.consecutiveHits) {
+          if (onLastPhase) {
+            autoTuneActiveRef.current = false
+            setAutoTuneRunning(false)
+            setAutoTuneDone(true)
+            return
+          }
+          advancePhase()
+        }
+
+        // Phase experiment count
+        phaseExpCountRef.current += 1
+        setPhaseExpCount(phaseExpCountRef.current)
+
+        // Max experiments reached: check phase threshold before advancing.
+        if (phaseExpCountRef.current >= maxExp && !onLastPhase) {
+          if (phaseBestScoreRef.current <= phaseThreshold) {
+            // Threshold cleared — advance normally.
+            advancePhase()
+          } else {
+            // Threshold not met — enter/continue extension mode.
+            phaseExtCountRef.current += 1
+            setPhaseExtCount(phaseExtCountRef.current)
+            if (phaseExtCountRef.current >= cfg.phaseExtensionMax) {
+              // Extension exhausted without meeting threshold — fail.
+              autoTuneActiveRef.current = false
+              setAutoTuneRunning(false)
+              setAutoTuneFailed(true)
+              return
+            }
+            // Otherwise keep running extra experiments (no phase advance yet).
+          }
+        }
+
+        // Last phase: advance (finish) when cap hit, regardless of threshold.
+        if (phaseExpCountRef.current >= maxExp && onLastPhase) {
+          autoTuneActiveRef.current = false
+          setAutoTuneRunning(false)
+          setAutoTuneDone(true)
+          return
+        }
+
+        setTimeout(() => { if (autoTuneActiveRef.current) runSimRef.current() }, 80)
+        return
+      }
+
+      // ── Manual run continuation ───────────────────────────────────────────
+      if (manualActiveRef.current) {
+        manualDoneRef.current += 1
+        const done  = manualDoneRef.current
+        const total = manualTotalRef.current
+        setManualRunProgress({ done, total })
         if (done < total) {
-          setTimeout(() => { if (autoRunActiveRef.current) runSimRef.current() }, 80)
+          setTimeout(() => { if (manualActiveRef.current) runSimRef.current() }, 80)
         } else {
-          autoRunActiveRef.current = false
-          setAutoRunning(false)
+          manualActiveRef.current = false
+          setManualRunning(false)
         }
       }
     }, 0)
   }, [mechanism, gains, setpointDisplay, isRunning, testCount])
 
-  // Keep runSimRef current so auto-run always calls the latest closure.
   useEffect(() => { runSimRef.current = runSim }, [runSim])
+
+  // ── Auto-Tune controls ──────────────────────────────────────────────────────
+
+  const startAutoTune = useCallback(() => {
+    if (isRunning || autoTuneActiveRef.current) return
+
+    // If re-starting after done/failed or from idle: full reset
+    if (currentPhaseRef.current === 0 || autoTuneDone || autoTuneFailed) {
+      optimizerRef.current   = new BayesianOptimizer(defaultBounds(mechanism.type), mechanism.type)
+      fineTuneOptRef.current = null
+      fineTuneSeqRef.current = []
+      allEntriesRef.current  = []
+      currentPhaseRef.current    = 1
+      consecutiveHitsRef.current = 0
+      phaseExpCountRef.current   = 0
+      phaseExtCountRef.current   = 0
+      phaseBestScoreRef.current  = Infinity
+      setCurrentPhase(1)
+      setConsecutiveHits(0)
+      setPhaseExpCount(0)
+      setPhaseExtCount(0)
+      setPhaseBestScore(Infinity)
+      setAutoTuneDone(false)
+      setAutoTuneFailed(false)
+      setHistory([])
+      setTestCount(0)
+      setMetrics(null)
+      setStepData([])
+      setSegmentBoundaries([])
+      setGains(calculateBaselineGains(mechanism))
+    } else {
+      // Resume from current phase (e.g., after Stop)
+      if (currentPhaseRef.current === 0) {
+        currentPhaseRef.current = 1
+        setCurrentPhase(1)
+      }
+    }
+
+    autoTuneActiveRef.current = true
+    setAutoTuneRunning(true)
+    setTimeout(() => runSimRef.current(), 0)
+  }, [isRunning, mechanism, autoTuneDone, autoTuneFailed])
+
+  const stopAutoTune = useCallback(() => {
+    autoTuneActiveRef.current = false
+    setAutoTuneRunning(false)
+  }, [])
+
+  const acceptTune = useCallback(() => {
+    autoTuneActiveRef.current = false
+    setAutoTuneRunning(false)
+    setAutoTuneDone(true)
+    // Snap gains to the best found so far
+    const best = allEntriesRef.current.reduce<OptimizerEntry | null>(
+      (b, e) => !b || e.metrics.score < b.metrics.score ? e : b, null
+    )
+    if (best) setGains(best.gains)
+  }, [])
+
+  // ── Manual run controls ─────────────────────────────────────────────────────
+
+  const startManualRun = useCallback((n: number) => {
+    if (isRunning || n < 1 || autoTuneActiveRef.current) return
+    if (currentPhaseRef.current === 0) {
+      currentPhaseRef.current = 1
+      setCurrentPhase(1)
+    }
+    manualDoneRef.current   = 0
+    manualTotalRef.current  = n
+    manualActiveRef.current = true
+    setManualRunning(true)
+    setManualRunProgress({ done: 0, total: n })
+    setTimeout(() => runSimRef.current(), 0)
+  }, [isRunning])
+
+  const stopManualRun = useCallback(() => {
+    manualActiveRef.current = false
+    setManualRunning(false)
+  }, [])
 
   // ── Bayesian suggest ────────────────────────────────────────────────────────
 
   const suggestGains = useCallback(() => {
-    if (!optimizerRef.current) return
+    const activeOpt = currentPhaseRef.current >= 2
+      ? fineTuneOptRef.current
+      : optimizerRef.current
+    if (!activeOpt) return
     const baseline = calculateBaselineGains(mechanism)
-    // Pin physics-derived feedforward gains; let optimizer tune kP, kI, kD, kS
-    const fixed: Partial<Gains> = { kV: baseline.kV, kG: baseline.kG, kA: baseline.kA }
-    const suggested = optimizerRef.current.suggest(fixed)
-    setGains(suggested)
+    setGains(activeOpt.suggest({ kV: baseline.kV, kG: baseline.kG, kA: baseline.kA }))
   }, [mechanism])
-
-  // ── Auto-run ────────────────────────────────────────────────────────────────
-
-  const startAutoRun = useCallback((n: number) => {
-    if (isRunning || n < 1) return
-    autoRunDoneRef.current   = 0
-    autoRunTotalRef.current  = n
-    autoRunActiveRef.current = true
-    setAutoRunning(true)
-    setAutoRunProgress({ done: 0, total: n })
-    setTimeout(() => runSimRef.current(), 0)
-  }, [isRunning])
-
-  const stopAutoRun = useCallback(() => {
-    autoRunActiveRef.current = false
-    setAutoRunning(false)
-  }, [])
 
   // ── NT4 live mode ───────────────────────────────────────────────────────────
 
   const connectNT4 = useCallback(() => {
-    if (nt4Ref.current) {
-      nt4Ref.current.disconnect()
-    }
+    if (nt4Ref.current) nt4Ref.current.disconnect()
 
     const url    = nt4URL(teamNumber)
     const prefix = '/gainlab'
-
     const client = new NT4Client(
       url,
       (topic, _timestampUs, value) => {
@@ -173,7 +385,6 @@ export default function App(): JSX.Element {
       },
       (status) => setConnectionStatus(status)
     )
-
     client.subscribe(`${prefix}/actual`)
     client.publish(`${prefix}/setpoint`)
     client.publish(`${prefix}/enabled`)
@@ -197,7 +408,6 @@ export default function App(): JSX.Element {
     setIsRunning(true)
     setStepData([])
     setSegmentBoundaries([])
-
     const prefix = '/gainlab'
     nt4Ref.current.publishValue(`${prefix}/setpoint`, setpointDisplay)
     nt4Ref.current.publishValue(`${prefix}/enabled`, 1)
@@ -206,20 +416,20 @@ export default function App(): JSX.Element {
   function endLiveTest(): void {
     liveTestActiveRef.current = false
     nt4Ref.current?.publishValue('/gainlab/enabled', 0)
-
     const pts = liveBufferRef.current
     if (pts.length > 0) {
       const { metrics: m } = runSimulation(mechanism, gains, setpointDisplay, 0)
       setMetrics(m)
-
       const entry: OptimizerEntry = {
         gains:          { ...gains },
         metrics:        m,
         segmentMetrics: [],
         testIndex:      testCount,
         steps:          [{ setpointDisplay, durationS: 2.0 }],
+        tunePhase:      1,
       }
-      setHistory(prev => [...prev, entry])
+      allEntriesRef.current = [...allEntriesRef.current, entry]
+      setHistory(allEntriesRef.current)
       setTestCount(prev => prev + 1)
       optimizerRef.current?.observe(entry)
     }
@@ -229,32 +439,40 @@ export default function App(): JSX.Element {
   // ── Export ──────────────────────────────────────────────────────────────────
 
   const exportJava = useCallback(() => {
+    // Use the best-scoring gains from the optimizer history if available;
+    // fall back to current gains for manual / non-auto-tune sessions.
+    const bestEntry = allEntriesRef.current.length > 0
+      ? allEntriesRef.current.reduce((b, e) => e.metrics.score < b.metrics.score ? e : b)
+      : null
+    const exportGains = bestEntry?.gains ?? gains
     const mechLabel = mechanism.type.charAt(0).toUpperCase() + mechanism.type.slice(1)
     const snippet = [
       `// GainLab — ${mechLabel} gains (CTRE Phoenix 6)`,
       `// Motor: ${mechanism.numMotors}× ${mechanism.motorType}, Gear ratio: ${mechanism.gearRatio}`,
-      `// Tests run: ${testCount}`,
+      `// Tests run: ${testCount}${bestEntry ? `  |  Best score: ${bestEntry.metrics.score.toFixed(2)}` : ''}`,
       ``,
       `TalonFXConfiguration config = new TalonFXConfiguration();`,
-      `config.Slot0.kP = ${gains.kP.toFixed(4)};`,
-      `config.Slot0.kI = ${gains.kI.toFixed(4)};`,
-      `config.Slot0.kD = ${gains.kD.toFixed(4)};`,
-      `config.Slot0.kS = ${gains.kS.toFixed(4)};`,
-      `config.Slot0.kV = ${gains.kV.toFixed(4)};`,
-      `config.Slot0.kA = ${gains.kA.toFixed(4)};`,
-      `config.Slot0.kG = ${gains.kG.toFixed(4)};`,
+      `config.Slot0.kP = ${exportGains.kP.toFixed(4)};`,
+      `config.Slot0.kI = ${exportGains.kI.toFixed(4)};`,
+      `config.Slot0.kD = ${exportGains.kD.toFixed(4)};`,
+      `config.Slot0.kS = ${exportGains.kS.toFixed(4)};`,
+      `config.Slot0.kV = ${exportGains.kV.toFixed(4)};`,
+      `config.Slot0.kA = ${exportGains.kA.toFixed(4)};`,
+      `config.Slot0.kG = ${exportGains.kG.toFixed(4)};`,
       `motor.getConfigurator().apply(config);`
     ].join('\n')
-
     if (window.api) {
-      window.api.saveSession(JSON.stringify({ gains, mechanism, snippet, testCount }))
+      window.api.saveSession(JSON.stringify({ gains: exportGains, mechanism, snippet, testCount }))
     } else {
       navigator.clipboard.writeText(snippet).catch(() => {})
     }
   }, [gains, mechanism, testCount])
 
+  // ── Derived display values ──────────────────────────────────────────────────
+
   const unitLabel = displayUnitLabel(mechanism)
-  const phaseInfo: PhaseInfo = optimizerRef.current?.getPhaseInfo() ?? {
+  const activeOpt = currentPhase >= 2 ? fineTuneOptRef.current : optimizerRef.current
+  const phaseInfo: PhaseInfo = activeOpt?.getPhaseInfo() ?? {
     phase: 'structured',
     label: 'Structured Sweep',
     description: 'Initializing…',
@@ -293,14 +511,28 @@ export default function App(): JSX.Element {
           isRunning={isRunning}
           phaseInfo={phaseInfo}
           history={history}
-          autoRunning={autoRunning}
-          autoRunProgress={autoRunProgress}
+          unitLabel={unitLabel}
+          currentPhase={currentPhase}
+          consecutiveHits={consecutiveHits}
+          phaseExpCount={phaseExpCount}
+          phaseExtCount={phaseExtCount}
+          phaseBestScore={phaseBestScore}
+          autoTuneRunning={autoTuneRunning}
+          autoTuneDone={autoTuneDone}
+          autoTuneFailed={autoTuneFailed}
+          autoTuneConfig={autoTuneConfig}
+          manualRunning={manualRunning}
+          manualRunProgress={manualRunProgress}
           onGainsChange={setGains}
           onRunTest={connectionMode === 'sim' ? runSim : startLiveTest}
           onSuggest={suggestGains}
           onExport={exportJava}
-          onStartAutoRun={startAutoRun}
-          onStopAutoRun={stopAutoRun}
+          onStartAutoTune={startAutoTune}
+          onStopAutoTune={stopAutoTune}
+          onAcceptTune={acceptTune}
+          onStartManualRun={startManualRun}
+          onStopManualRun={stopManualRun}
+          onAutoTuneConfigChange={setAutoTuneConfig}
         />
       </div>
 
@@ -312,10 +544,7 @@ export default function App(): JSX.Element {
         onTeamNumberChange={setTeamNumber}
         onConnect={connectNT4}
         onDisconnect={disconnectNT4}
-        onSwitchToSim={() => {
-          disconnectNT4()
-          setConnectionMode('sim')
-        }}
+        onSwitchToSim={() => { disconnectNT4(); setConnectionMode('sim') }}
       />
     </div>
   )
