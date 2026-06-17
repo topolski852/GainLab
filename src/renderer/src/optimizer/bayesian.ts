@@ -135,14 +135,16 @@ export function defaultBounds(mechType: MechanismType): GainBounds {
       kG: { min: 0,     max: 0    },
     }
   }
-  // Position control (arm / elevator): kD needed for damping, kG for gravity.
+  // Position control (arm / elevator): kD for damping, kG for gravity.
+  // kS and kV require a motion-profile velocity setpoint (MotionMagicVoltage);
+  // for static PositionVoltage setpoints both terms are zero and excluded from search.
   return {
     kP: { min: 0.001, max: 10  },
     kI: { min: 0,     max: 0.5 },
     kD: { min: 0,     max: 1   },
-    kS: { min: 0,     max: 1   },
-    kV: { min: 0,     max: 0.5 },
-    kA: { min: 0,     max: 0.5 },
+    kS: { min: 0,     max: 0   },
+    kV: { min: 0,     max: 0   },
+    kA: { min: 0,     max: 0   },
     kG: mechType !== 'flywheel' ? { min: 0, max: 2 } : { min: 0, max: 0 },
   }
 }

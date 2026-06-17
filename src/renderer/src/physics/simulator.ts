@@ -134,17 +134,16 @@ function runStep(
       }
       prevError    = error
 
-      // For position-controlled mechanisms (arm/elevator), kS and kV are velocity-based
-      // feedforwards (Phoenix 6 PositionVoltage uses motion-profile velocity/accel for
-      // these terms — 0 for a static setpoint). Use actual mechanism velocity so they
-      // contribute during the move and decay to 0 at steady state, matching hardware.
+      // For position-controlled mechanisms (arm/elevator), Phoenix 6 PositionVoltage
+      // applies kS and kV using the motion-profile velocity setpoint, which is zero for
+      // a static step. Using actual velocity here is anti-damping (velocity in the
+      // direction of motion adds energy to oscillations). Only kG is applied; kS/kV
+      // are forced to 0 in the optimizer bounds for arm/elevator.
       let ff: number
       if (cfg.type === 'arm') {
-        const velCTRE = omega_mech * cfg.gearRatio / (2 * Math.PI)
-        ff = gains.kS * Math.sign(velCTRE) + gains.kV * velCTRE + gains.kG * Math.cos(theta_mech)
+        ff = gains.kG * Math.cos(theta_mech)
       } else if (cfg.type === 'elevator') {
-        const velCTRE = v_elev * cfg.gearRatio / (2 * Math.PI * cfg.spoolRadiusM)
-        ff = gains.kS * Math.sign(velCTRE) + gains.kV * velCTRE + gains.kG
+        ff = gains.kG
       } else {
         ff = gains.kS * Math.sign(setpointCTRE) + gains.kV * setpointCTRE
       }
