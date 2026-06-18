@@ -93,10 +93,14 @@ export default function Launcher({ onNewProject, onOpenProject, onOpenRecent, on
           ) : (
             <div className="launcher-recent-list">
               {recent.map(r => (
-                <button
+                <div
                   key={r.filePath}
                   className="launcher-recent-item"
+                  role="button"
+                  tabIndex={0}
+                  title={r.filePath}
                   onClick={() => onOpenRecent(r.filePath)}
+                  onKeyDown={e => { if (e.key === 'Enter') onOpenRecent(r.filePath) }}
                 >
                   <div className="launcher-recent-name">{r.name}</div>
                   <div className="launcher-recent-meta">
@@ -104,7 +108,6 @@ export default function Launcher({ onNewProject, onOpenProject, onOpenRecent, on
                     <span className="launcher-recent-dot">·</span>
                     <span>{formatDate(r.updatedAt)}</span>
                   </div>
-                  <div className="launcher-recent-path">{r.filePath}</div>
                   <button
                     className="launcher-recent-remove"
                     onClick={e => handleRemove(r.filePath, e)}
@@ -112,7 +115,7 @@ export default function Launcher({ onNewProject, onOpenProject, onOpenRecent, on
                   >
                     ×
                   </button>
-                </button>
+                </div>
               ))}
             </div>
           )}

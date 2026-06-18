@@ -10,9 +10,9 @@ import {
 } from './physics/simulator'
 import { BayesianOptimizer, defaultBounds } from './optimizer/bayesian'
 import { NT4Client, nt4URL } from './nt4/client'
-import MechanismPanel from './components/MechanismPanel'
 import StepGraph from './components/StepGraph'
 import GainsPanel from './components/GainsPanel'
+import TunePanel from './components/TunePanel'
 import StatusBar from './components/StatusBar'
 import Launcher from './components/Launcher'
 import ProjectSidebar from './components/ProjectSidebar'
@@ -71,6 +71,8 @@ export default function App(): JSX.Element {
   const [showMotorConfig, setShowMotorConfig] = useState(false)
   const [configMotorId, setConfigMotorId]   = useState<string | null>(null)
   const [motorConfigDraft, setMotorConfigDraft] = useState<MotorProfile | null>(null)
+  // Activity bar: which sidebar view is active (null = collapsed). 'motors' is the only view for now.
+  const [activeSidebarView, setActiveSidebarView] = useState<string | null>('motors')
 
   // ── Optimizer refs ──────────────────────────────────────────────────────────
   const optimizerRef      = useRef<BayesianOptimizer | null>(null)
@@ -729,24 +731,36 @@ export default function App(): JSX.Element {
 
   if (appView === 'launcher') {
     return (
-      <div className="app-layout">
-        <Launcher
-          onNewProject={handleNewProject}
-          onOpenProject={handleOpenProject}
-          onOpenRecent={handleOpenRecent}
-          onRemoveRecent={fp => window.api.removeRecentProject(fp)}
-        />
-      </div>
+      <Launcher
+        onNewProject={handleNewProject}
+        onOpenProject={handleOpenProject}
+        onOpenRecent={handleOpenRecent}
+        onRemoveRecent={fp => window.api.removeRecentProject(fp)}
+      />
     )
   }
 
+  const sidebarOpen = activeSidebarView !== null
+
   return (
     <>
-      <div className={`app-layout ${activeProject ? 'app-layout-project' : ''}`}>
-        {activeProject && (
-          <div className="panel panel-sidebar">
+      <div className={`app-layout app-layout-project${sidebarOpen ? '' : ' sidebar-closed'}`}>
+        {/* Activity rail — always visible, foundation for future sidebar views */}
+        <div className="panel-activity">
+          <button
+            className={`activity-btn ${activeSidebarView === 'motors' ? 'active' : ''}`}
+            onClick={() => setActiveSidebarView(v => v === 'motors' ? null : 'motors')}
+            title="Motors"
+          >
+            ☰
+          </button>
+        </div>
+
+        {/* Collapsible sidebar panel */}
+        <div className="panel panel-sidebar">
+          {activeSidebarView === 'motors' && (
             <ProjectSidebar
-              project={activeProject}
+              project={activeProject!}
               activeMotorId={activeMotorId}
               onSelectMotor={handleSelectMotor}
               onAddMotor={openAddMotorModal}
@@ -758,33 +772,13 @@ export default function App(): JSX.Element {
               onClose={handleCloseProject}
               isSaving={isSaving}
             />
-          </div>
-        )}
-
-        <div className="panel panel-left">
-          <MechanismPanel
-            mechanism={mechanism}
-            setpoint={setpointDisplay}
-            onMechanismChange={setMechanism}
-            onSetpointChange={setSetpointDisplay}
-            unitLabel={unitLabel}
-          />
+          )}
         </div>
 
-        <div className="panel panel-center">
-          <StepGraph
-            data={stepData}
-            segmentBoundaries={segmentBoundaries}
-            unitLabel={unitLabel}
-            mechanismType={mechanism.type}
-            metrics={metrics}
-          />
-        </div>
-
-        <div className="panel panel-right">
-          <GainsPanel
+        {/* Auto-Tune / history panel */}
+        <div className="panel panel-tune">
+          <TunePanel
             gains={gains}
-            metrics={metrics}
             mechanism={mechanism}
             nominalSetpoint={setpointDisplay}
             testCount={testCount}
@@ -802,18 +796,46 @@ export default function App(): JSX.Element {
             autoTuneFailed={autoTuneFailed}
             autoTuneConfig={autoTuneConfig}
             manualRunning={manualRunning}
-            manualRunProgress={manualRunProgress}
-            onGainsChange={setGains}
-            onRunTest={connectionMode === 'sim' ? runSim : startLiveTest}
-            onSuggest={suggestGains}
-            onExport={exportJava}
             onStartAutoTune={startAutoTune}
             onStopAutoTune={stopAutoTune}
             onAcceptTune={acceptTune}
-            onStartManualRun={startManualRun}
-            onStopManualRun={stopManualRun}
             onAutoTuneConfigChange={setAutoTuneConfig}
+            onRestoreGains={setGains}
           />
+        </div>
+
+        {/* Main area: graph on top, gains/controls on bottom */}
+        <div className="panel-main">
+          <div className="panel panel-graph">
+            <StepGraph
+              data={stepData}
+              segmentBoundaries={segmentBoundaries}
+              unitLabel={unitLabel}
+              mechanismType={mechanism.type}
+              metrics={metrics}
+            />
+          </div>
+          <div className="panel panel-bottom">
+            <GainsPanel
+              gains={gains}
+              metrics={metrics}
+              mechanism={mechanism}
+              setpointDisplay={setpointDisplay}
+              unitLabel={unitLabel}
+              isRunning={isRunning}
+              autoTuneRunning={autoTuneRunning}
+              manualRunning={manualRunning}
+              manualRunProgress={manualRunProgress}
+              onGainsChange={setGains}
+              onSetpointChange={setSetpointDisplay}
+              onRunTest={connectionMode === 'sim' ? runSim : startLiveTest}
+              onSuggest={suggestGains}
+              onExport={exportJava}
+              onStartManualRun={startManualRun}
+              onStopManualRun={stopManualRun}
+              onOpenConfig={() => activeMotorId && openConfigureMotorModal(activeMotorId)}
+            />
+          </div>
         </div>
 
         <StatusBar

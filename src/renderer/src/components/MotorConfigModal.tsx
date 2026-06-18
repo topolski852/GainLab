@@ -4,6 +4,7 @@ import {
   MotorType, MechanismType, ControlMode
 } from '../types'
 import { MOTORS, MOTOR_GROUPS } from '../physics/motors'
+import { getOperatingRangeDefaults } from '../physics/operatingRangeProfiles'
 import NumericInput from './NumericInput'
 
 interface Props {
@@ -80,16 +81,30 @@ export default function MotorConfigModal({ motor, mode, onSave, onCancel }: Prop
   const [newSPValue, setNewSPValue] = useState('')
 
   function handleControlModeChange(newMode: ControlMode): void {
-    const valid = validMechTypes(newMode)
-    if (!valid.includes(draft.mechanism.type)) {
-      setDraft(prev => ({
-        ...prev,
-        controlMode: newMode,
-        mechanism: { ...prev.mechanism, type: defaultMechForMode(newMode) }
-      }))
-    } else {
-      set('controlMode', newMode)
-    }
+    const valid   = validMechTypes(newMode)
+    const newType = valid.includes(draft.mechanism.type) ? draft.mechanism.type : defaultMechForMode(newMode)
+    const range   = getOperatingRangeDefaults(newMode, newType)
+    setDraft(prev => ({
+      ...prev,
+      controlMode: newMode,
+      mechanism: { ...prev.mechanism, type: newType },
+      ...(range ? { minSetpoint: range.min, nominalSetpoint: range.nominal, maxSetpoint: range.max } : {}),
+    }))
+  }
+
+  function handleMechTypeChange(newType: MechanismType): void {
+    const range = getOperatingRangeDefaults(draft.controlMode, newType)
+    setDraft(prev => ({
+      ...prev,
+      mechanism: { ...prev.mechanism, type: newType },
+      ...(range ? { minSetpoint: range.min, nominalSetpoint: range.nominal, maxSetpoint: range.max } : {}),
+    }))
+  }
+
+  function applyRangeSuggestion(): void {
+    const range = getOperatingRangeDefaults(draft.controlMode, draft.mechanism.type)
+    if (!range) return
+    setDraft(prev => ({ ...prev, minSetpoint: range.min, nominalSetpoint: range.nominal, maxSetpoint: range.max }))
   }
 
   // ── Visibility flags ──────────────────────────────────────────────────────────
@@ -249,7 +264,7 @@ export default function MotorConfigModal({ motor, mode, onSave, onCancel }: Prop
               <div className="cfg-tab-group">
                 {validMechTypes(draft.controlMode).map(t => (
                   <button key={t} className={`cfg-tab-btn ${draft.mechanism.type === t ? 'active' : ''}`}
-                    onClick={() => setMech('type', t)}>
+                    onClick={() => handleMechTypeChange(t)}>
                     {t.charAt(0).toUpperCase() + t.slice(1)}
                   </button>
                 ))}
@@ -339,7 +354,14 @@ export default function MotorConfigModal({ motor, mode, onSave, onCancel }: Prop
 
           {/* ── Operating Range ──────────────────────────────────────────── */}
           <div className="cfg-section">
-            <div className="cfg-section-title">Operating Range</div>
+            <div className="cfg-section-title">
+              Operating Range
+              {getOperatingRangeDefaults(draft.controlMode, draft.mechanism.type) && (
+                <button className="cfg-suggest-btn" onClick={applyRangeSuggestion} title="Reset to suggested defaults for this mode and mechanism type">
+                  ↺ Suggested
+                </button>
+              )}
+            </div>
             <div className="cfg-note" style={{ marginBottom: 10 }}>
               {isTorqueMode
                 ? 'Current range for auto-tune experiments. Nominal is the typical operating current.'
