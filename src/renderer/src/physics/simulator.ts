@@ -1,4 +1,4 @@
-import { MechanismConfig, Gains, StepResponsePoint, StepMetrics, TestStep, MechanismType } from '../types'
+import { MechanismConfig, Gains, StepResponsePoint, StepMetrics, TestStep, MechanismType, StressDiagnostics, SegmentDiagnostic, StressThresholds } from '../types'
 import { MOTORS, motorKvCTRE } from './motors'
 
 const PHYSICS_DT = 0.005
@@ -169,7 +169,8 @@ function runStep(
       omega_mech += (tau_per * cfg.numMotors * cfg.gearRatio / J_eff) * PHYSICS_DT
 
     } else if (cfg.type === 'arm') {
-      const tau_grav = cfg.massKg * GRAVITY * (cfg.lengthM / 2) * Math.cos(theta_mech)
+      const cgDist   = cfg.cgDistanceM ?? cfg.lengthM / 2
+      const tau_grav = cfg.massKg * GRAVITY * cgDist * Math.cos(theta_mech)
       const alpha    = (tau_per * cfg.numMotors * cfg.gearRatio - tau_grav) / J_eff
       omega_mech    += alpha * PHYSICS_DT
       theta_mech    += omega_mech * PHYSICS_DT
@@ -597,8 +598,8 @@ export function generatePhaseSequence(
   const s = nominalSetpoint
   const S = (v: number) => sp(v, mechType)
 
-  const randCaps = [0, 0, 0.15, 0.12, 0.10, 0.08, 0.05]
-  const rand = Math.min(randomization, randCaps[Math.min(phaseNum, 6)] ?? 0.15)
+  const randCaps = [0, 0, 0.15, 0.12, 0.10, 0.08, 0, 0]
+  const rand = Math.min(randomization, randCaps[Math.min(phaseNum, 7)] ?? 0.15)
 
   // Fractions < 0.10 represent stow/home positions and are never jittered.
   function jit(frac: number): number {
@@ -667,14 +668,46 @@ export function generatePhaseSequence(
       ]
     }
 
-    // Phase 6: full match simulation for position-controlled mechanisms.
-    // Setpoints are structural (real match motion) — no jitter applied.
+    // Structural fixed sequences — no jitter applied.
     const M = (frac: number, dur: number): import('../types').TestStep =>
       ({ setpointDisplay: S(s * frac), durationS: dur })
 
+    if (phaseNum === 6) {
+      // Phase 6: stress diagnostics — single fixed run, aggressive drop cycles.
+      // Sudden full-range reversals from arbitrary positions stress kP/kD/kG interaction.
+      return mechType === 'arm'
+        ? [
+            M(0.05, 0.5), M(1.00, 0.8),
+            M(0.05, 0.5), M(1.00, 0.8),
+            M(0.05, 0.5), M(0.50, 0.8),
+            M(1.00, 0.8), M(0.05, 0.5),
+            M(1.00, 0.8), M(0.05, 0.5),
+            M(0.75, 0.7), M(0.05, 0.5),
+            M(1.00, 0.8), M(0.50, 0.7),
+            M(0.05, 0.5), M(1.00, 0.8),
+            M(0.30, 0.6), M(1.00, 0.8),
+            M(0.05, 0.5), M(1.00, 0.8),
+          ]
+        : [
+            // Elevator: L4→stow→L4 rapid cycles, mixed L2/L3 drops
+            M(0.05, 0.5), M(1.00, 0.8),
+            M(0.05, 0.5), M(1.00, 0.8),
+            M(0.05, 0.5), M(0.65, 0.8),
+            M(1.00, 0.8), M(0.05, 0.5),
+            M(1.00, 0.8), M(0.05, 0.5),
+            M(0.35, 0.7), M(0.05, 0.5),
+            M(1.00, 0.8), M(0.35, 0.7),
+            M(0.05, 0.5), M(1.00, 0.8),
+            M(0.65, 0.7), M(1.00, 0.8),
+            M(0.05, 0.5), M(1.00, 0.8),
+          ]
+    }
+
+    // Phase 7: match benchmark — full match simulation.
+    // Setpoints are structural (real match motion) — no jitter applied.
+
     if (mechType === 'arm') {
-      // Arm match sim: deploy/stow cycles with defense posture and end-game hold.
-      // Dwells reflect real arm travel time — long enough to test settling.
+      // Arm Phase 7 match benchmark: deploy/stow cycles with defense posture and end-game hold.
       return [
         // AUTO: 2 scoring cycles
         M(0.05, 0.5), M(1.00, 1.5), M(0.05, 0.8), M(1.00, 1.5), M(0.05, 1.0),
@@ -695,8 +728,7 @@ export function generatePhaseSequence(
       ]
     }
 
-    // Elevator Phase 6: cycles through L2 (35%), L3 (65%), L4 (100%) scoring heights.
-    // Tests gravity-opposed ascent (hardest) and gravity-assisted descent (overshoot risk).
+    // Elevator Phase 7 match benchmark: L2/L3/L4 scoring height cycles.
     return [
       // AUTO: 2 high-goal cycles
       M(0.05, 0.5), M(1.00, 1.5), M(0.05, 0.8), M(1.00, 1.5), M(0.05, 0.8),
@@ -747,7 +779,22 @@ export function generatePhaseSequence(
   }
 
   if (phaseNum === 5) {
+    // Clean tight optimization — no zero-RPM drops. Keeps optimizer signal consistent
+    // so the GP can converge reliably in the ±2.5% radius before stress testing.
     const s5: [number, number][] = [
+      [0.25, 0.7], [0.90, 0.7], [0.40, 0.7], [1.00, 0.7],
+      [0.55, 0.7], [0.95, 0.7], [0.35, 0.55], [0.80, 0.7],
+      [0.70, 0.7], [0.45, 0.55], [1.00, 0.7], [0.30, 0.55],
+      [0.85, 0.7], [0.60, 0.7], [0.95, 0.7], [0.50, 0.55],
+      [0.75, 0.7], [0.90, 0.7], [0.65, 0.7], [1.00, 0.7],
+    ]
+    return s5.map(([f, d]) => ({ setpointDisplay: S(s * jit(f)), durationS: d }))
+  }
+
+  if (phaseNum === 6) {
+    // Phase 6: stress diagnostics — single fixed run, zero-RPM drop cycles.
+    // No randomization; structural zero drops are the designed test signal.
+    const s6: [number, number][] = [
       [0.00, 0.5], [1.00, 0.6],
       [0.00, 0.5], [1.00, 0.6], [0.00, 0.5], [1.00, 0.6],
       [0.40, 0.6], [1.00, 0.6], [0.60, 0.6], [0.00, 0.5], [0.80, 0.6], [1.00, 0.6],
@@ -756,13 +803,12 @@ export function generatePhaseSequence(
       [1.00, 0.6], [0.00, 0.5], [1.00, 0.6], [0.00, 0.5], [1.00, 0.6],
       [1.00, 0.6], [0.00, 0.5],
     ]
-    return s5.map(([f, d]) => ({ setpointDisplay: S(s * jit(f)), durationS: d }))
+    return s6.map(([f, d]) => ({ setpointDisplay: S(s * f), durationS: d }))
   }
 
-  // Phase 6: rotary match simulation — branches on mechType
+  // Phase 7: match benchmark — rotary match simulation, branches on mechType
   if (mechType === 'roller') {
-    // Roller match sim: intake/conveyor cycling.
-    // Tests speed hold under game-piece load (key metric) and quick on/off transitions.
+    // Roller Phase 7 match benchmark: intake/conveyor cycling.
     // Negative fractions = reverse (unjam / outtake).
     const r6: [number, number][] = [
       // AUTO: spin up, intake 2 game pieces
@@ -791,9 +837,8 @@ export function generatePhaseSequence(
     }))
   }
 
-  // Flywheel Phase 6: 2-minute match simulation (shooter).
-  // "Shooting on the move" sections use structured setpoint variation (camera-correction
-  // jitter around target speed) — this is intentional, not random noise.
+  // Flywheel Phase 7 match benchmark: 2-minute match simulation (shooter).
+  // "Shooting on the move" sections use structural setpoint variation — not random noise.
   const f6: [number, number][] = [
     // AUTO: spin-up, 3 shots, drive away
     [0.00, 0.8],  [1.00, 1.5],  [0.85, 0.6], [1.00, 0.6], [0.85, 0.6],
@@ -856,7 +901,8 @@ export function calculateBaselineGains(cfg: MechanismConfig): import('../types')
 
   let kG = 0
   if (cfg.type === 'arm') {
-    kG = cfg.massKg * GRAVITY * (cfg.lengthM / 2) * motor.resistanceOhms /
+    const cgDist = cfg.cgDistanceM ?? cfg.lengthM / 2
+    kG = cfg.massKg * GRAVITY * cgDist * motor.resistanceOhms /
       (motor.KtNmPerAmp * cfg.numMotors * cfg.gearRatio)
   } else if (cfg.type === 'elevator') {
     kG = cfg.massKg * GRAVITY * cfg.spoolRadiusM * motor.resistanceOhms /
@@ -871,5 +917,94 @@ export function calculateBaselineGains(cfg: MechanismConfig): import('../types')
     kV: parseFloat(kV.toFixed(4)),
     kA: parseFloat(kA.toFixed(4)),
     kG: parseFloat(kG.toFixed(4)),
+  }
+}
+
+// ─── Phase 6 stress diagnostics ───────────────────────────────────────────────
+
+export function computeStressDiagnostics(
+  result: MultiStepResult,
+  steps: TestStep[],
+  thresholds: StressThresholds
+): StressDiagnostics {
+  const { segmentMetrics, points, segmentBoundaries } = result
+
+  const spMax = steps.reduce((m, s) => Math.max(m, Math.abs(s.setpointDisplay)), 1)
+  const zeroThreshold = spMax * 0.05
+
+  const segments: SegmentDiagnostic[] = segmentMetrics.map((seg, i) => {
+    const currentSP = steps[i]?.setpointDisplay ?? 0
+    const prevSP    = i > 0 ? (steps[i - 1]?.setpointDisplay ?? 0) : currentSP
+
+    let stepType: SegmentDiagnostic['stepType']
+    if (i === 0) {
+      stepType = Math.abs(currentSP) > zeroThreshold ? 'ascend' : 'hold'
+    } else if (Math.abs(prevSP) <= zeroThreshold && Math.abs(currentSP) > zeroThreshold) {
+      stepType = 'recover-from-zero'
+    } else if (currentSP > prevSP) {
+      stepType = 'ascend'
+    } else if (currentSP < prevSP) {
+      stepType = 'descend'
+    } else {
+      stepType = 'hold'
+    }
+
+    // Max instantaneous |error| within this segment's time window
+    const segStart = segmentBoundaries[i] ?? 0
+    const segEnd   = segmentBoundaries[i + 1] ?? Infinity
+    let maxErr = 0
+    for (const pt of points) {
+      if (pt.time < segStart) continue
+      if (pt.time >= segEnd)  break
+      const err = Math.abs(pt.setpoint - pt.actual)
+      if (err > maxErr) maxErr = err
+    }
+
+    return {
+      index:                 i,
+      stepType,
+      overshootPct:          seg.overshootPct,
+      recoveryTimeS:         seg.settlingTimeS,
+      maxInstantaneousError: maxErr,
+      oscillationCount:      seg.oscillations,
+    }
+  })
+
+  const zeroRecoveries = segments.filter(s => s.stepType === 'recover-from-zero')
+  const maxRecoveryFromZeroS = zeroRecoveries.length > 0
+    ? Math.max(...zeroRecoveries.map(s => s.recoveryTimeS))
+    : 0
+
+  const maxOvershootPct = segments.length > 0
+    ? Math.max(...segments.map(s => s.overshootPct))
+    : 0
+
+  const oscillatingSegments = segments.filter(s => s.oscillationCount > 1).length
+
+  const failureReasons: string[] = []
+
+  if (zeroRecoveries.length > 0 && maxRecoveryFromZeroS > thresholds.maxRecoveryFromZeroS) {
+    failureReasons.push(
+      `Recovery from zero took ${maxRecoveryFromZeroS.toFixed(2)}s (limit: ${thresholds.maxRecoveryFromZeroS}s)`
+    )
+  }
+  if (maxOvershootPct > thresholds.maxOvershootPct) {
+    failureReasons.push(
+      `Overshoot ${maxOvershootPct.toFixed(1)}% exceeds limit ${thresholds.maxOvershootPct}%`
+    )
+  }
+  if (oscillatingSegments > thresholds.maxOscillatingSegments) {
+    failureReasons.push(
+      `${oscillatingSegments} oscillating segments exceeds limit of ${thresholds.maxOscillatingSegments}`
+    )
+  }
+
+  return {
+    segments,
+    maxRecoveryFromZeroS,
+    maxOvershootPct,
+    oscillatingSegments,
+    passed: failureReasons.length === 0,
+    failureReasons,
   }
 }

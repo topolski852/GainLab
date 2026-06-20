@@ -2,11 +2,12 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import {
   MechanismConfig, Gains, AppState, StepResponsePoint, OptimizerEntry,
   ConnectionStatus, PhaseInfo, AutoTuneConfig, TestStep, defaultAutoTuneConfig,
-  Project, MotorProfile, defaultMotorProfile, defaultProject
+  Project, MotorProfile, defaultMotorProfile, defaultProject, StressDiagnostics
 } from './types'
 import {
   runMultiStepSimulation, runSimulation, calculateBaselineGains,
-  displayUnitLabel, defaultSetpoint, getTestSequence, generatePhaseSequence
+  displayUnitLabel, defaultSetpoint, getTestSequence, generatePhaseSequence,
+  computeStressDiagnostics
 } from './physics/simulator'
 import { BayesianOptimizer, defaultBounds } from './optimizer/bayesian'
 import { NT4Client, nt4URL } from './nt4/client'
@@ -17,6 +18,7 @@ import StatusBar from './components/StatusBar'
 import Launcher from './components/Launcher'
 import ProjectSidebar from './components/ProjectSidebar'
 import MotorConfigModal from './components/MotorConfigModal'
+import SettingsPanel, { TextSize } from './components/SettingsPanel'
 
 const DEFAULT_MECHANISM: MechanismConfig = {
   type: 'flywheel',
@@ -26,6 +28,7 @@ const DEFAULT_MECHANISM: MechanismConfig = {
   massKg: 0.5,
   radiusM: 0.1,
   lengthM: 0.5,
+  cgDistanceM: null,
   startAngleDeg: 0,
   spoolRadiusM: 0.0254,
   startHeightM: 0
@@ -55,7 +58,7 @@ export default function App(): JSX.Element {
   const [phaseExtCount, setPhaseExtCount] = useState(0)      // extra experiments in extension mode
   const [phaseBestScore, setPhaseBestScore] = useState(Infinity) // best score within current phase
   const [autoTuneConfig, setAutoTuneConfig] = useState<AutoTuneConfig>(
-    () => defaultAutoTuneConfig(defaultSetpoint(DEFAULT_MECHANISM))
+    () => defaultAutoTuneConfig(defaultSetpoint(DEFAULT_MECHANISM), DEFAULT_MECHANISM.type)
   )
 
   // ── Manual run state ────────────────────────────────────────────────────────
@@ -71,8 +74,18 @@ export default function App(): JSX.Element {
   const [showMotorConfig, setShowMotorConfig] = useState(false)
   const [configMotorId, setConfigMotorId]   = useState<string | null>(null)
   const [motorConfigDraft, setMotorConfigDraft] = useState<MotorProfile | null>(null)
-  // Activity bar: which sidebar view is active (null = collapsed). 'motors' is the only view for now.
+  // Activity bar: which sidebar view is active (null = collapsed).
   const [activeSidebarView, setActiveSidebarView] = useState<string | null>('motors')
+
+  // Text size preference — persisted to localStorage, applied as data-text-size on <html>
+  const [textSize, setTextSize] = useState<TextSize>(() =>
+    (localStorage.getItem('gainlab-text-size') as TextSize | null) ?? 'sm'
+  )
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-text-size', textSize)
+    localStorage.setItem('gainlab-text-size', textSize)
+  }, [textSize])
 
   // ── Optimizer refs ──────────────────────────────────────────────────────────
   const optimizerRef      = useRef<BayesianOptimizer | null>(null)
@@ -94,6 +107,9 @@ export default function App(): JSX.Element {
   const fineTuneSeqRef       = useRef<TestStep[]>([])
   // Stable history array kept in sync synchronously within runSim (not via setState).
   const allEntriesRef        = useRef<OptimizerEntry[]>([])
+  // Phase 6 retry counter and diagnostic result
+  const p6RetriesRemainingRef = useRef(0)
+  const stressDiagnosticsRef  = useRef<StressDiagnostics | null>(null)
 
   // Manual run refs
   const manualActiveRef  = useRef(false)
@@ -136,7 +152,7 @@ export default function App(): JSX.Element {
     setGains(calculateBaselineGains(mechanism))
     const sp = defaultSetpoint(mechanism)
     setSetpointDisplay(sp)
-    setAutoTuneConfig(defaultAutoTuneConfig(sp))
+    setAutoTuneConfig(defaultAutoTuneConfig(sp, mechanism.type))
   }, [mechanism.type, mechanism.motorType, mechanism.numMotors, mechanism.gearRatio,
       mechanism.massKg, mechanism.radiusM, mechanism.lengthM, mechanism.spoolRadiusM])
 
@@ -197,19 +213,43 @@ export default function App(): JSX.Element {
       // ── Auto-Tune continuation ────────────────────────────────────────────
       if (autoTuneActiveRef.current) {
         const onLastPhase = phase >= cfg.numPhases
-        const maxExp = phase === 1 ? cfg.p1MaxExperiments : phase >= 6 ? cfg.p6MaxExperiments : cfg.phaseMaxExperiments
+        // Phases 6–7 are single-run (no Bayesian loop); Phase 1 uses p1 cap; all others use phaseMax.
+        const maxExp = phase === 1
+          ? cfg.p1MaxExperiments
+          : (phase === 6 || phase === 7)
+            ? 1
+            : cfg.phaseMaxExperiments
         // phaseThresholds[0] = p1→p2 threshold, [1] = p2→p3, etc.
         const thresholdIdx = Math.min(phase - 1, cfg.phaseThresholds.length - 1)
         const phaseThreshold = cfg.phaseThresholds[thresholdIdx] ?? Infinity
 
-        // Advance to the next phase (shared by consecutive-hits fast-forward and maxExp trigger).
-        function advancePhase(): void {
-          const nextPhase = phase + 1
+        // Advance to a target phase (defaults to phase + 1).
+        // Phases 6–7 get a null optimizer and gain snapshot of current best.
+        function advancePhase(targetPhase?: number): void {
+          const nextPhase = targetPhase ?? phase + 1
           const hist      = allEntriesRef.current
-          const bestEntry = hist.reduce((b, e) => e.metrics.score < b.metrics.score ? e : b)
+          // Use the CURRENT phase's best entry as the center for the next phase.
+          // Cross-phase scores are not comparable (different sequences per phase), so using the
+          // global best entry would permanently anchor to Phase 2's easy-sequence score even in
+          // Phase 5 — causing every fine-tune phase to explore around the wrong gain set.
+          // For retries (Phase 6 → Phase 5), use Phase 5's best (from the first Phase 5 run).
+          const isRetry        = targetPhase !== undefined && targetPhase < phase
+          const anchorPhase    = isRetry ? nextPhase : phase
+          const phaseEntries   = hist.filter(e => e.tunePhase === anchorPhase)
+          const bestEntry      = phaseEntries.length > 0
+            ? phaseEntries.reduce((b, e) => e.metrics.score < b.metrics.score ? e : b)
+            : hist.reduce((b, e) => e.metrics.score < b.metrics.score ? e : b)
           const p1Bounds  = optimizerRef.current?.currentBounds ?? defaultBounds(mechanism.type)
-          fineTuneSeqRef.current  = generatePhaseSequence(mechanism.type, setpointDisplay, nextPhase, cfg.randomization)
-          fineTuneOptRef.current  = BayesianOptimizer.createNextPhase(nextPhase, hist, bestEntry.gains, p1Bounds, mechanism.type, cfg)
+          fineTuneSeqRef.current = generatePhaseSequence(mechanism.type, setpointDisplay, nextPhase, cfg.randomization)
+          // Always snap gains to best at phase boundary — overrides the auto-suggest that ran
+          // just before advancePhase(). Ensures each phase starts by re-running known-best
+          // gains under the new (harder) sequence, anchoring the GP before it explores.
+          setGains(bestEntry.gains)
+          if (nextPhase <= 5) {
+            fineTuneOptRef.current = BayesianOptimizer.createNextPhase(nextPhase, hist, bestEntry.gains, p1Bounds, mechanism.type, cfg)
+          } else {
+            fineTuneOptRef.current = null
+          }
           currentPhaseRef.current = nextPhase
           setCurrentPhase(nextPhase)
           consecutiveHitsRef.current = 0
@@ -223,7 +263,8 @@ export default function App(): JSX.Element {
         }
 
         // Consecutive hits: fast-forward to next phase, or finish if on the last phase.
-        if (consecutiveHitsRef.current >= cfg.consecutiveHits) {
+        // Only applies to Bayesian phases (1–5); Phase 6/7 are single-run diagnostics.
+        if (phase <= 5 && consecutiveHitsRef.current >= cfg.consecutiveHits) {
           if (onLastPhase) {
             autoTuneActiveRef.current = false
             setAutoTuneRunning(false)
@@ -237,23 +278,32 @@ export default function App(): JSX.Element {
         phaseExpCountRef.current += 1
         setPhaseExpCount(phaseExpCountRef.current)
 
-        // Max experiments reached: check phase threshold before advancing.
+        // Max experiments reached
         if (phaseExpCountRef.current >= maxExp && !onLastPhase) {
-          if (phaseBestScoreRef.current <= phaseThreshold) {
-            // Threshold cleared — advance normally.
-            advancePhase()
-          } else {
-            // Threshold not met — enter/continue extension mode.
-            phaseExtCountRef.current += 1
-            setPhaseExtCount(phaseExtCountRef.current)
-            if (phaseExtCountRef.current >= cfg.phaseExtensionMax) {
-              // Extension exhausted without meeting threshold — fail.
-              autoTuneActiveRef.current = false
-              setAutoTuneRunning(false)
-              setAutoTuneFailed(true)
-              return
+          if (phase === 6) {
+            // Phase 6 single run complete — compute stress diagnostics and decide next step.
+            const diagnostics = computeStressDiagnostics(result, fineTuneSeqRef.current, cfg.stressThresholds)
+            stressDiagnosticsRef.current = diagnostics
+            if (diagnostics.passed || p6RetriesRemainingRef.current <= 0) {
+              advancePhase(7)
+            } else {
+              p6RetriesRemainingRef.current--
+              advancePhase(5)
             }
-            // Otherwise keep running extra experiments (no phase advance yet).
+          } else {
+            // Bayesian phases 2–5: check phase threshold before advancing.
+            if (phaseBestScoreRef.current <= phaseThreshold) {
+              advancePhase()
+            } else {
+              phaseExtCountRef.current += 1
+              setPhaseExtCount(phaseExtCountRef.current)
+              if (phaseExtCountRef.current >= cfg.phaseExtensionMax) {
+                autoTuneActiveRef.current = false
+                setAutoTuneRunning(false)
+                setAutoTuneFailed(true)
+                return
+              }
+            }
           }
         }
 
@@ -294,16 +344,17 @@ export default function App(): JSX.Element {
 
     // If re-starting after done/failed or from idle: full reset
     if (currentPhaseRef.current === 0 || autoTuneDone || autoTuneFailed) {
-      optimizerRef.current   = new BayesianOptimizer(defaultBounds(mechanism.type), mechanism.type)
-      fineTuneOptRef.current = null
-      fineTuneSeqRef.current = []
-      allEntriesRef.current  = []
-      currentPhaseRef.current    = 1
-      consecutiveHitsRef.current = 0
-      phaseExpCountRef.current   = 0
-      phaseExtCountRef.current   = 0
-      phaseBestScoreRef.current  = Infinity
-      setCurrentPhase(1)
+      const cfg = autoTuneConfigRef.current
+      const sp  = Math.max(1, Math.min(cfg.startPhase, cfg.numPhases))
+
+      optimizerRef.current          = new BayesianOptimizer(defaultBounds(mechanism.type), mechanism.type)
+      allEntriesRef.current         = []
+      p6RetriesRemainingRef.current = cfg.p6MaxRetries
+      stressDiagnosticsRef.current  = null
+      consecutiveHitsRef.current    = 0
+      phaseExpCountRef.current      = 0
+      phaseExtCountRef.current      = 0
+      phaseBestScoreRef.current     = Infinity
       setConsecutiveHits(0)
       setPhaseExpCount(0)
       setPhaseExtCount(0)
@@ -315,7 +366,21 @@ export default function App(): JSX.Element {
       setMetrics(null)
       setStepData([])
       setSegmentBoundaries([])
-      setGains(calculateBaselineGains(mechanism))
+
+      if (sp > 1) {
+        // Skip Phase 1 — start directly from current gains, centered in the target phase's radius
+        fineTuneSeqRef.current = generatePhaseSequence(mechanism.type, setpointDisplay, sp, cfg.randomization)
+        fineTuneOptRef.current = BayesianOptimizer.createNextPhase(sp, [], gains, defaultBounds(mechanism.type), mechanism.type, cfg)
+        currentPhaseRef.current = sp
+        setCurrentPhase(sp)
+        // Keep current gains — they are the starting center for the optimizer
+      } else {
+        fineTuneOptRef.current  = null
+        fineTuneSeqRef.current  = []
+        currentPhaseRef.current = 1
+        setCurrentPhase(1)
+        setGains(calculateBaselineGains(mechanism))
+      }
     } else {
       // Resume from current phase (e.g., after Stop)
       if (currentPhaseRef.current === 0) {
@@ -519,8 +584,8 @@ export default function App(): JSX.Element {
     setMechanism(motor.mechanism)
     setGains(motor.gains)
     setSetpointDisplay(motor.nominalSetpoint)
-    setAutoTuneConfig(defaultAutoTuneConfig(motor.nominalSetpoint))
     optimizerRef.current = new BayesianOptimizer(defaultBounds(motor.mechanism.type), motor.mechanism.type)
+    setAutoTuneConfig(defaultAutoTuneConfig(motor.nominalSetpoint, motor.mechanism.type))
   }
 
   function syncMotorToProject(project: Project, motorId: string): Project {
@@ -745,7 +810,7 @@ export default function App(): JSX.Element {
   return (
     <>
       <div className={`app-layout app-layout-project${sidebarOpen ? '' : ' sidebar-closed'}`}>
-        {/* Activity rail — always visible, foundation for future sidebar views */}
+        {/* Activity rail — always visible */}
         <div className="panel-activity">
           <button
             className={`activity-btn ${activeSidebarView === 'motors' ? 'active' : ''}`}
@@ -753,6 +818,14 @@ export default function App(): JSX.Element {
             title="Motors"
           >
             ☰
+          </button>
+          <div className="activity-spacer" />
+          <button
+            className={`activity-btn ${activeSidebarView === 'settings' ? 'active' : ''}`}
+            onClick={() => setActiveSidebarView(v => v === 'settings' ? null : 'settings')}
+            title="Settings"
+          >
+            ⚙
           </button>
         </div>
 
@@ -772,6 +845,9 @@ export default function App(): JSX.Element {
               onClose={handleCloseProject}
               isSaving={isSaving}
             />
+          )}
+          {activeSidebarView === 'settings' && (
+            <SettingsPanel textSize={textSize} onTextSizeChange={setTextSize} />
           )}
         </div>
 

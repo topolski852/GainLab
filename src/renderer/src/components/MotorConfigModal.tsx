@@ -328,6 +328,21 @@ export default function MotorConfigModal({ motor, mode, onSave, onCancel }: Prop
                     onChange={v => setMech('lengthM', v)} />
                 </div>
               )}
+              {draft.mechanism.type === 'arm' && (
+                <div className="cfg-field">
+                  <div className="cfg-field-label">
+                    CG Distance (m)
+                    <span className="cfg-field-hint"> — default: length ÷ 2</span>
+                  </div>
+                  <NumericInput
+                    className="cfg-input"
+                    min={0.001} step={0.05}
+                    value={draft.mechanism.cgDistanceM ?? draft.mechanism.lengthM / 2}
+                    onChange={v => setMech('cgDistanceM', v)}
+                    placeholder={String((draft.mechanism.lengthM / 2).toFixed(3))}
+                  />
+                </div>
+              )}
               {draft.mechanism.type === 'elevator' && (
                 <div className="cfg-field">
                   <div className="cfg-field-label">Spool Radius (m)</div>

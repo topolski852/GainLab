@@ -16,6 +16,7 @@ export interface MechanismConfig {
   radiusM: number
   // arm only
   lengthM: number
+  cgDistanceM: number | null  // null → use lengthM / 2
   startAngleDeg: number
   // elevator only
   spoolRadiusM: number
@@ -39,6 +40,44 @@ export interface Gains {
 export interface TestStep {
   setpointDisplay: number   // in display units (RPM / deg / m)
   durationS: number
+}
+
+// ─── Stress Diagnostics (Phase 6) ────────────────────────────────────────────
+
+export type StepType = 'ascend' | 'descend' | 'recover-from-zero' | 'hold'
+
+export interface SegmentDiagnostic {
+  index: number
+  stepType: StepType
+  overshootPct: number
+  recoveryTimeS: number
+  maxInstantaneousError: number
+  oscillationCount: number
+}
+
+export interface StressDiagnostics {
+  segments: SegmentDiagnostic[]
+  maxRecoveryFromZeroS: number
+  maxOvershootPct: number
+  oscillatingSegments: number
+  passed: boolean
+  failureReasons: string[]
+}
+
+export interface StressThresholds {
+  maxRecoveryFromZeroS: number
+  maxOvershootPct: number
+  maxOscillatingSegments: number
+}
+
+export function defaultStressThresholds(mechType: MechanismType = 'flywheel'): StressThresholds {
+  if (mechType === 'flywheel' || mechType === 'roller') {
+    return { maxRecoveryFromZeroS: 1.5, maxOvershootPct: 15, maxOscillatingSegments: 2 }
+  }
+  if (mechType === 'arm') {
+    return { maxRecoveryFromZeroS: 2.0, maxOvershootPct: 10, maxOscillatingSegments: 1 }
+  }
+  return { maxRecoveryFromZeroS: 2.0, maxOvershootPct: 8, maxOscillatingSegments: 1 }
 }
 
 // ─── Step Response ────────────────────────────────────────────────────────────
@@ -92,14 +131,16 @@ export type GainBounds = Record<keyof Gains, GainBound>
 export interface AutoTuneConfig {
   targetScore: number           // stop when N consecutive experiments score below this
   consecutiveHits: number       // how many consecutive sub-target scores to stop (default 5)
-  numPhases: number             // total phases including Phase 1 (2–6, default 4)
+  numPhases: number             // total phases including Phase 1 (2–7, default 7)
+  startPhase: number            // first phase to run — skip phases below this (1 = full run, default 1)
   p1MaxExperiments: number      // max Phase 1 experiments before advancing (default 30)
   phaseMaxExperiments: number   // max experiments per fine-tune phase before advancing (default 20)
-  p6MaxExperiments: number      // max experiments for Phase 6 match-test (default 8; sequences are ~2min long)
-  // Search radius per fine-tune phase (fraction of best value, applied ±)
-  // Index 0 = Phase 2, index 1 = Phase 3, … index 4 = Phase 6
-  phaseRadii: number[]          // default [0.20, 0.10, 0.05, 0.025, 0.0125]
-  // Fine-tune sequence parameters (phases 2–5 only; Phase 6 uses fixed match sequence)
+  p6MaxRetries: number          // max times Phase 6 stress can loop back to Phase 5 (default 2)
+  // Search radius per Bayesian fine-tune phase (fraction of best value, applied ±)
+  // Index 0 = Phase 2, index 1 = Phase 3, index 2 = Phase 4, index 3 = Phase 5
+  // Phases 6–7 (stress/benchmark) have no optimizer radius
+  phaseRadii: number[]          // default [0.20, 0.10, 0.05, 0.025]
+  // Fine-tune sequence parameters (phases 2–5 only)
   numSetpoints: number          // legacy — only used by Phase 1 getTestSequence
   dwellS: number                // scales dwell proportionally for phases 2–5 (1.0 = designed durations)
   randomization: number         // 0–1 jitter on setpoint spacing (default 0.15; capped per-phase internally)
@@ -107,23 +148,27 @@ export interface AutoTuneConfig {
   // run up to phaseExtensionMax extra experiments before failing the auto-tune.
   phaseThresholds: number[]     // max acceptable score to advance from each phase [p1→2, p2→3, …, p5→6]
   phaseExtensionMax: number     // max extra experiments per phase before failing (default 50)
+  // Phase 6 stress diagnostics pass/fail thresholds
+  stressThresholds: StressThresholds
 }
 
-export function defaultAutoTuneConfig(nominalSetpoint?: number): AutoTuneConfig {
+export function defaultAutoTuneConfig(nominalSetpoint?: number, mechType: MechanismType = 'flywheel'): AutoTuneConfig {
   void nominalSetpoint  // kept as param for future min/max setpoint defaults
   return {
     targetScore:         2.0,
     consecutiveHits:     5,
-    numPhases:           6,
+    numPhases:           7,
+    startPhase:          1,
     p1MaxExperiments:    30,
     phaseMaxExperiments: 20,
-    p6MaxExperiments:    8,
-    phaseRadii:          [0.20, 0.10, 0.05, 0.025, 0.0125],
+    p6MaxRetries:        2,
+    phaseRadii:          [0.20, 0.10, 0.05, 0.025],
     numSetpoints:        6,
     dwellS:              1.0,
     randomization:       0.15,
     phaseThresholds:     [30, 15, 15, 20, 25],
     phaseExtensionMax:   50,
+    stressThresholds:    defaultStressThresholds(mechType),
   }
 }
 
@@ -267,6 +312,7 @@ export function defaultMotorProfile(name = 'New Motor'): MotorProfile {
       massKg: 0.5,
       radiusM: 0.1,
       lengthM: 0.5,
+      cgDistanceM: null,
       startAngleDeg: 0,
       spoolRadiusM: 0.0254,
       startHeightM: 0,

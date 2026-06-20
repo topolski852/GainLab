@@ -248,7 +248,12 @@ export class BayesianOptimizer {
   ): BayesianOptimizer {
     const phaseBounds = narrowedBounds(bestGains, phase1Bounds, radius)
     const opt = new BayesianOptimizer(phaseBounds, mechType, true, `Phase ${phaseNum}`)
-    for (const entry of history) {
+    // Only seed with same-phase history. Cross-phase entries have scores from different
+    // sequences — seeding with them gives the GP a false signal (e.g. a Phase 2 score of 3.20
+    // from a 4-step sequence looks "better" than a Phase 4 anchor score of 4.63 from 16 steps,
+    // causing the GP to chase gains that are not actually better under the current sequence).
+    // Same-phase entries are useful on P6→P5 retries where Phase 5 has already run once.
+    for (const entry of history.filter(e => e.tunePhase === phaseNum)) {
       if (gainsInBounds(entry.gains, phaseBounds)) opt.observe(entry)
     }
     return opt

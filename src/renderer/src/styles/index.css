@@ -1,4 +1,4 @@
-﻿/* â”€â”€ Variables â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Variables ─────────────────────────────────────────────────────────────── */
 :root {
   /* Background layers */
   --bg-void:     #04060a;
@@ -12,7 +12,7 @@
   --border-normal:  #2a4262;
   --border-accent:  #3a5a7c;
 
-  /* Team 1507 â€” Blue & Gold */
+  /* Team 1507 — Blue & Gold */
   --blue:         #1d4ed8;
   --blue-bright:  #3b82f6;
   --blue-dim:     #1e3a6e;
@@ -39,7 +39,74 @@
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
 }
 
-/* â”€â”€ Reset â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Text & layout scale ─────────────────────────────────────────────────────
+   Set data-text-size="xs|sm|md|lg|xl" on <html> to switch presets.
+   SM is the default (applied when no attribute is set or attribute = "sm").  */
+:root {
+  --tx-xs:   12px;
+  --tx-sm:   13px;
+  --tx-base: 14px;
+  --tx-num:  15px;
+  --tx-lg:   17px;
+  --tx-xl:   18px;
+  --tx-2xl:  22px;
+  --tx-logo: 48px;
+
+  --lay-rail:     44px;
+  --lay-sidebar:  216px;
+  --lay-tune:     276px;
+  --lay-left:     280px;
+  --lay-right:    316px;
+  --lay-status:   40px;
+  --lay-metrics:  42px;
+  --lay-gain-lbl: 32px;
+  --lay-gain-unt: 78px;
+  --lay-cnt-w:    34px;
+  --lay-cnt-h:    30px;
+  --lay-hist:     460px;
+}
+
+html[data-text-size="xs"] {
+  --tx-xs: 10px; --tx-sm: 11px; --tx-base: 12px;
+  --tx-num: 13px; --tx-lg: 15px; --tx-xl: 16px; --tx-2xl: 19px; --tx-logo: 40px;
+  --lay-rail: 38px; --lay-sidebar: 188px; --lay-tune: 248px;
+  --lay-left: 252px; --lay-right: 284px;
+  --lay-status: 34px; --lay-metrics: 36px;
+  --lay-gain-lbl: 26px; --lay-gain-unt: 68px;
+  --lay-cnt-w: 30px; --lay-cnt-h: 26px; --lay-hist: 400px;
+}
+
+html[data-text-size="md"] {
+  --tx-xs: 13px; --tx-sm: 14px; --tx-base: 15px;
+  --tx-num: 17px; --tx-lg: 20px; --tx-xl: 22px; --tx-2xl: 26px; --tx-logo: 56px;
+  --lay-rail: 48px; --lay-sidebar: 240px; --lay-tune: 308px;
+  --lay-left: 312px; --lay-right: 352px;
+  --lay-status: 44px; --lay-metrics: 46px;
+  --lay-gain-lbl: 36px; --lay-gain-unt: 86px;
+  --lay-cnt-w: 38px; --lay-cnt-h: 34px; --lay-hist: 500px;
+}
+
+html[data-text-size="lg"] {
+  --tx-xs: 14px; --tx-sm: 15px; --tx-base: 16px;
+  --tx-num: 19px; --tx-lg: 22px; --tx-xl: 26px; --tx-2xl: 30px; --tx-logo: 64px;
+  --lay-rail: 52px; --lay-sidebar: 264px; --lay-tune: 344px;
+  --lay-left: 348px; --lay-right: 390px;
+  --lay-status: 48px; --lay-metrics: 50px;
+  --lay-gain-lbl: 40px; --lay-gain-unt: 94px;
+  --lay-cnt-w: 42px; --lay-cnt-h: 38px; --lay-hist: 540px;
+}
+
+html[data-text-size="xl"] {
+  --tx-xs: 15px; --tx-sm: 16px; --tx-base: 17px;
+  --tx-num: 21px; --tx-lg: 25px; --tx-xl: 28px; --tx-2xl: 34px; --tx-logo: 72px;
+  --lay-rail: 56px; --lay-sidebar: 292px; --lay-tune: 384px;
+  --lay-left: 388px; --lay-right: 434px;
+  --lay-status: 52px; --lay-metrics: 54px;
+  --lay-gain-lbl: 44px; --lay-gain-unt: 102px;
+  --lay-cnt-w: 46px; --lay-cnt-h: 42px; --lay-hist: 580px;
+}
+
+/* ── Reset ──────────────────────────────────────────────────────────────────── */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -53,14 +120,13 @@ html, body, #root {
 
 body {
   font-family: 'Segoe UI', 'Inter', system-ui, sans-serif;
-  font-size: 13px;
+  font-size: var(--tx-base);
   color: var(--text-primary);
   background: var(--bg-void);
   -webkit-font-smoothing: antialiased;
 }
 
-/* â”€â”€ Circuit board background â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-/* Fine dot grid + two-layer line grid to evoke PCB traces */
+/* ── Circuit board background ──────────────────────────────────────────────── */
 body::before {
   content: '';
   position: fixed;
@@ -68,12 +134,9 @@ body::before {
   pointer-events: none;
   z-index: 0;
   background-image:
-    /* Dot intersections */
     radial-gradient(circle at 1px 1px, rgba(59, 130, 246, 0.07) 1px, transparent 0),
-    /* Minor grid */
     linear-gradient(rgba(59, 130, 246, 0.025) 1px, transparent 1px),
     linear-gradient(90deg, rgba(59, 130, 246, 0.025) 1px, transparent 1px),
-    /* Major grid */
     linear-gradient(rgba(59, 130, 246, 0.05) 1px, transparent 1px),
     linear-gradient(90deg, rgba(59, 130, 246, 0.05) 1px, transparent 1px);
   background-size:
@@ -84,13 +147,13 @@ body::before {
     120px 120px;
 }
 
-/* â”€â”€ App layout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── App layout ────────────────────────────────────────────────────────────── */
 .app-layout {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: 264px 1fr 300px;
-  grid-template-rows: 1fr 36px;
+  grid-template-columns: var(--lay-left) 1fr var(--lay-right);
+  grid-template-rows: 1fr var(--lay-status);
   grid-template-areas:
     "left center right"
     "bar  bar    bar";
@@ -124,7 +187,7 @@ body::before {
   scrollbar-color: var(--border-accent) transparent;
 }
 
-/* â”€â”€ Panel corners (targeting-reticle accent) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Panel corners (targeting-reticle accent) ──────────────────────────────── */
 .panel {
   position: relative;
 }
@@ -148,9 +211,9 @@ body::before {
   border-right: 2px solid var(--gold);
 }
 
-/* â”€â”€ Typography helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Typography helpers ────────────────────────────────────────────────────── */
 .panel-title {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -173,12 +236,19 @@ body::before {
 }
 
 .section-label {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   font-weight: 600;
   letter-spacing: 0.10em;
   text-transform: uppercase;
   color: var(--text-muted);
   padding: 8px 14px 4px;
+}
+
+/* Strip section-label's own horizontal padding when it sits inside the row container */
+.section-label-row .section-label {
+  padding-left: 0;
+  padding-right: 0;
+  padding-top: 0;
 }
 
 .section-divider {
@@ -187,7 +257,7 @@ body::before {
   margin: 8px 0;
 }
 
-/* â”€â”€ Form fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Form fields ───────────────────────────────────────────────────────────── */
 .field {
   padding: 4px 14px;
   display: flex;
@@ -196,7 +266,7 @@ body::before {
 }
 
 .field-label {
-  font-size: 12px;
+  font-size: var(--tx-sm);
   color: var(--text-primary);
 }
 
@@ -207,7 +277,7 @@ body::before {
 }
 
 .field-unit {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   font-family: var(--font-mono);
   min-width: 24px;
@@ -219,8 +289,8 @@ body::before {
   border: 1px solid var(--border-normal);
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 4px 8px;
+  font-size: var(--tx-sm);
+  padding: 5px 9px;
   outline: none;
   transition: border-color 0.15s;
   clip-path: polygon(var(--chamfer-sm) 0%, 100% 0%, 100% calc(100% - var(--chamfer-sm)), calc(100% - var(--chamfer-sm)) 100%, 0% 100%, 0% var(--chamfer-sm));
@@ -241,8 +311,8 @@ body::before {
   background: var(--bg-elevated);
   border: 1px solid var(--border-normal);
   color: var(--text-primary);
-  font-size: 12px;
-  padding: 4px 8px;
+  font-size: var(--tx-sm);
+  padding: 5px 9px;
   outline: none;
   cursor: pointer;
   appearance: none;
@@ -255,7 +325,7 @@ body::before {
 
 .select:focus { border-color: var(--blue-bright); }
 
-/* â”€â”€ Tab buttons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Tab buttons ───────────────────────────────────────────────────────────── */
 .tab-group {
   display: flex;
   gap: 0;
@@ -264,11 +334,11 @@ body::before {
 
 .tab-btn {
   flex: 1;
-  padding: 6px 4px;
+  padding: 7px 4px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-normal);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--tx-xs);
   font-weight: 600;
   cursor: pointer;
   letter-spacing: 0.05em;
@@ -291,19 +361,19 @@ body::before {
   color: var(--text-primary);
 }
 
-/* â”€â”€ Count buttons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Count buttons ─────────────────────────────────────────────────────────── */
 .count-group {
   display: flex;
   gap: 4px;
 }
 
 .count-btn {
-  width: 32px;
-  height: 28px;
+  width: var(--lay-cnt-w);
+  height: var(--lay-cnt-h);
   background: var(--bg-elevated);
   border: 1px solid var(--border-normal);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--tx-sm);
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s;
@@ -321,7 +391,7 @@ body::before {
   color: var(--text-primary);
 }
 
-/* â”€â”€ Info box â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Info box ──────────────────────────────────────────────────────────────── */
 .info-box {
   margin: 6px 14px;
   background: var(--bg-elevated);
@@ -334,14 +404,14 @@ body::before {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 11px;
+  font-size: var(--tx-xs);
   padding: 2px 0;
 }
 
-.info-key { color: var(--text-secondary); font-size: 12px; }
-.info-val { color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; }
+.info-key { color: var(--text-secondary); font-size: var(--tx-sm); }
+.info-val { color: var(--text-primary); font-family: var(--font-mono); font-size: var(--tx-sm); }
 
-/* â”€â”€ Gear ratio input (input:output format) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Gear ratio input (input:output format) ────────────────────────────────── */
 .gear-ratio-row {
   display: flex;
   align-items: center;
@@ -364,13 +434,13 @@ body::before {
 
 .gear-ratio-computed {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--tx-xs);
   color: var(--text-muted);
   white-space: nowrap;
   flex-shrink: 0;
 }
 
-/* â”€â”€ Mechanism panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Mechanism panel ───────────────────────────────────────────────────────── */
 .mechanism-panel {
   padding-bottom: 16px;
 }
@@ -389,18 +459,18 @@ body::before {
   justify-content: space-between;
   align-items: center;
   padding: 2px 0;
-  font-size: 11px;
+  font-size: var(--tx-xs);
 }
 
 .motor-stat-key {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--tx-xs);
   letter-spacing: 0.02em;
 }
 
 .motor-stat-val {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--tx-sm);
   color: var(--text-primary);
 }
 
@@ -411,7 +481,7 @@ body::before {
   margin-top: 5px;
   padding-top: 5px;
   border-top: 1px solid var(--border-subtle);
-  font-size: 10px;
+  font-size: var(--tx-xs);
   color: var(--gold-bright);
   opacity: 0.65;
   letter-spacing: 0.01em;
@@ -420,7 +490,7 @@ body::before {
 .motor-trap-warning {
   margin-top: 6px;
   padding: 6px 8px;
-  font-size: 9px;
+  font-size: var(--tx-xs);
   line-height: 1.5;
   color: var(--gold-bright);
   background: rgba(240,180,41,0.07);
@@ -428,7 +498,7 @@ body::before {
   border-radius: var(--chamfer-sm);
 }
 
-/* â”€â”€ Step Graph â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Step Graph ────────────────────────────────────────────────────────────── */
 .step-graph-panel {
   display: flex;
   flex-direction: column;
@@ -457,7 +527,7 @@ body::before {
   height: 100%;
   gap: 12px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--tx-sm);
 }
 
 .chart-empty-icon { opacity: 0.6; }
@@ -466,14 +536,14 @@ body::before {
   background: var(--bg-elevated);
   border: 1px solid var(--border-accent);
   padding: 8px 12px;
-  font-size: 11px;
+  font-size: var(--tx-xs);
   font-family: var(--font-mono);
   min-width: 120px;
 }
 
 .tooltip-time {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--tx-xs);
   margin-bottom: 4px;
   padding-bottom: 4px;
   border-bottom: 1px solid var(--border-subtle);
@@ -490,7 +560,7 @@ body::before {
   display: flex;
   align-items: center;
   gap: 0;
-  height: 38px;
+  height: var(--lay-metrics);
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-panel);
   flex-shrink: 0;
@@ -506,7 +576,7 @@ body::before {
 }
 
 .metric-label {
-  font-size: 9px;
+  font-size: var(--tx-xs);
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -514,19 +584,19 @@ body::before {
 }
 
 .metric-value {
-  font-size: 13px;
+  font-size: var(--tx-num);
   font-family: var(--font-mono);
   color: var(--text-primary);
 }
 
 .metric-placeholder {
   padding-left: 16px;
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-muted);
 }
 
 .score-badge {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-muted);
   font-family: var(--font-mono);
 }
@@ -534,14 +604,14 @@ body::before {
   color: var(--text-secondary);
 }
 
-/* â”€â”€ Gains panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Gains panel ───────────────────────────────────────────────────────────── */
 .gains-panel {
   padding-bottom: 16px;
 }
 
 .gains-subtitle {
   font-weight: 400;
-  font-size: 10px;
+  font-size: var(--tx-xs);
   color: var(--text-muted);
   margin-left: 6px;
   letter-spacing: 0.06em;
@@ -556,15 +626,15 @@ body::before {
 
 .gain-row {
   display: grid;
-  grid-template-columns: 28px 1fr 72px;
+  grid-template-columns: var(--lay-gain-lbl) 1fr var(--lay-gain-unt);
   align-items: center;
   gap: 6px;
-  padding: 3px 0;
+  padding: 4px 0;
 }
 
 .gain-label {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--tx-sm);
   font-weight: 700;
   color: var(--gold-bright);
   text-align: right;
@@ -575,8 +645,8 @@ body::before {
   border: 1px solid var(--border-normal);
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 4px 7px;
+  font-size: var(--tx-sm);
+  padding: 5px 8px;
   outline: none;
   width: 100%;
   transition: border-color 0.15s, background 0.15s;
@@ -592,7 +662,7 @@ body::before {
 
 .gain-unit {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -606,7 +676,7 @@ body::before {
 
 .metrics-empty {
   padding: 6px 14px;
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-muted);
 }
 
@@ -614,19 +684,19 @@ body::before {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 3px 0;
+  padding: 4px 0;
   border-bottom: 1px solid var(--border-subtle);
 }
 .metric-list-row:last-child { border-bottom: none; }
 
 .metric-list-label {
-  font-size: 12px;
+  font-size: var(--tx-sm);
   color: var(--text-secondary);
 }
 
 .metric-list-value {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--tx-sm);
   color: var(--text-primary);
 }
 
@@ -638,19 +708,19 @@ body::before {
 }
 
 .metric-score-label {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   flex: 1;
 }
 
 .metric-score-value {
   font-family: var(--font-mono);
-  font-size: 16px;
+  font-size: var(--tx-xl);
   font-weight: 700;
 }
 
 .metric-score-hint {
-  font-size: 10px;
+  font-size: var(--tx-xs);
   color: var(--text-muted);
 }
 
@@ -667,8 +737,8 @@ body::before {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 9px 14px;
-  font-size: 12px;
+  padding: 10px 14px;
+  font-size: var(--tx-sm);
   font-weight: 600;
   letter-spacing: 0.06em;
   cursor: pointer;
@@ -727,8 +797,8 @@ body::before {
 /* Spinner */
 .spinner {
   display: inline-block;
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
   border: 2px solid rgba(255,255,255,0.2);
   border-top-color: #fff;
   border-radius: 50%;
@@ -742,10 +812,10 @@ body::before {
 /* Optimizer status */
 .optimizer-status {
   padding: 4px 14px;
-  font-size: 10px;
+  font-size: var(--tx-xs);
   color: var(--text-muted);
   text-align: center;
-  min-height: 20px;
+  min-height: 22px;
 }
 
 .optimizer-active {
@@ -754,11 +824,21 @@ body::before {
 }
 
 /* History */
+.history-outer {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
 .history-list {
   display: flex;
   flex-direction: column;
   gap: 3px;
   padding: 4px 14px;
+  max-height: var(--lay-hist);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-normal) transparent;
 }
 
 .history-entry {
@@ -767,7 +847,7 @@ body::before {
   gap: 6px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
-  padding: 5px 8px;
+  padding: 6px 9px;
   cursor: pointer;
   width: 100%;
   text-align: left;
@@ -787,9 +867,9 @@ body::before {
 
 .history-index {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--tx-xs);
   color: var(--text-muted);
-  min-width: 24px;
+  min-width: 28px;
 }
 
 .history-bar-wrap {
@@ -807,13 +887,13 @@ body::before {
 
 .history-score {
   font-family: var(--font-mono);
-  font-size: 11px;
-  min-width: 32px;
+  font-size: var(--tx-xs);
+  min-width: 36px;
   text-align: right;
 }
 
 .history-best-tag {
-  font-size: 9px;
+  font-size: var(--tx-xs);
   font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--gold);
@@ -822,7 +902,7 @@ body::before {
   padding: 1px 5px;
 }
 
-/* â”€â”€ Status bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Status bar ────────────────────────────────────────────────────────────── */
 .status-bar {
   grid-area: bar;
   display: flex;
@@ -857,10 +937,10 @@ body::before {
 }
 
 .mode-badge {
-  font-size: 10px;
+  font-size: var(--tx-xs);
   font-weight: 800;
   letter-spacing: 0.14em;
-  padding: 2px 8px;
+  padding: 2px 9px;
   clip-path: polygon(var(--chamfer-sm) 0%, 100% 0%, 100% calc(100% - var(--chamfer-sm)), calc(100% - var(--chamfer-sm)) 100%, 0% 100%, 0% var(--chamfer-sm));
 }
 
@@ -898,30 +978,30 @@ body::before {
 }
 
 .status-label {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
 }
 
 /* NT4 controls */
 .nt4-label {
-  font-size: 10px;
+  font-size: var(--tx-xs);
   letter-spacing: 0.08em;
   color: var(--text-muted);
 }
 
 .nt4-info {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-muted);
 }
 
 .team-input {
-  width: 54px;
+  width: 58px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-normal);
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--tx-sm);
   font-weight: 700;
   letter-spacing: 0.1em;
   padding: 3px 6px;
@@ -933,9 +1013,9 @@ body::before {
 .team-input:focus { border-color: var(--blue-bright); }
 
 .status-btn {
-  height: 22px;
-  padding: 0 10px;
-  font-size: 11px;
+  height: 26px;
+  padding: 0 11px;
+  font-size: var(--tx-xs);
   font-weight: 600;
   letter-spacing: 0.04em;
   cursor: pointer;
@@ -981,24 +1061,24 @@ body::before {
 
 .test-counter {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--tx-xs);
   color: var(--text-muted);
 }
 
 .branding {
-  font-size: 10px;
+  font-size: var(--tx-xs);
   font-weight: 700;
   letter-spacing: 0.12em;
   color: var(--border-accent);
 }
 
-/* â”€â”€ Scrollbar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar            { width: 5px; }
 ::-webkit-scrollbar-track      { background: transparent; }
 ::-webkit-scrollbar-thumb      { background: var(--border-accent); }
 ::-webkit-scrollbar-thumb:hover{ background: var(--border-normal); }
 
-/* â”€â”€ Section label row (label + inline button) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Section label row (label + inline button) ─────────────────────────────── */
 .section-label-row {
   display: flex;
   align-items: center;
@@ -1006,11 +1086,16 @@ body::before {
   margin-bottom: 6px;
 }
 
+.log-copy-buttons {
+  display: flex;
+  gap: 4px;
+}
+
 .btn-log-copy {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--tx-xs);
   letter-spacing: 0.05em;
-  padding: 2px 7px;
+  padding: 3px 8px;
   border-radius: 3px;
   border: 1px solid var(--border-accent);
   background: transparent;
@@ -1034,13 +1119,13 @@ body::before {
 /* oscillation indicator in history row */
 .history-osc {
   font-family: var(--font-mono);
-  font-size: 9px;
-  width: 16px;
+  font-size: var(--tx-xs);
+  width: 18px;
   text-align: center;
   flex-shrink: 0;
 }
 
-/* â”€â”€ Phase indicator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Phase indicator ───────────────────────────────────────────────────────── */
 .phase-indicator {
   padding: 8px 10px;
   background: var(--bg-elevated);
@@ -1056,10 +1141,10 @@ body::before {
 }
 
 .phase-badge {
-  font-size: 9px;
+  font-size: var(--tx-xs);
   font-weight: 700;
   letter-spacing: 0.1em;
-  padding: 2px 6px;
+  padding: 2px 7px;
   border-radius: 3px;
 }
 
@@ -1077,13 +1162,13 @@ body::before {
 
 .phase-exp-count {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
 }
 
 .phase-description {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   margin-bottom: 6px;
 }
@@ -1114,7 +1199,7 @@ body::before {
 /* Segment count badge in graph header */
 .segment-count {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--tx-xs);
   color: var(--text-muted);
   padding: 2px 6px;
   background: var(--bg-elevated);
@@ -1126,13 +1211,13 @@ body::before {
 /* Graph zoom reset button */
 .btn-reset-zoom {
   margin-left: auto;
-  font-size: 10px;
+  font-size: var(--tx-xs);
   font-family: var(--font-mono);
   color: var(--blue-bright);
   background: rgba(59, 130, 246, 0.10);
   border: 1px solid rgba(59, 130, 246, 0.25);
   border-radius: 3px;
-  padding: 2px 8px;
+  padding: 2px 9px;
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -1143,7 +1228,7 @@ body::before {
 /* Time marker elapsed-time badge in graph header */
 .marker-delta {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--gold-bright);
   background: rgba(240, 180, 41, 0.10);
   border: 1px solid rgba(240, 180, 41, 0.25);
@@ -1153,7 +1238,7 @@ body::before {
   letter-spacing: 0.02em;
 }
 
-/* Î”t row inside the chart tooltip */
+/* Δt row inside the chart tooltip */
 .tooltip-delta {
   color: var(--gold-bright) !important;
   border-top: 1px solid var(--border-subtle);
@@ -1161,11 +1246,11 @@ body::before {
   padding-top: 3px;
 }
 
-/* â”€â”€ Shared run spinners / stop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Shared run spinners / stop ─────────────────────────────────────────────── */
 .auto-run-spinner {
   display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border: 2px solid rgba(59, 130, 246, 0.3);
   border-top-color: var(--blue-bright);
   border-radius: 50%;
@@ -1173,12 +1258,12 @@ body::before {
 }
 
 .btn-stop {
-  padding: 4px 10px;
+  padding: 5px 11px;
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.3);
   border-radius: var(--chamfer-sm);
   color: var(--error);
-  font-size: 11px;
+  font-size: var(--tx-xs);
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s;
@@ -1186,9 +1271,9 @@ body::before {
 }
 
 .btn-stop:hover { background: rgba(239, 68, 68, 0.2); }
-.btn-stop.btn-sm { padding: 3px 8px; font-size: 10px; }
+.btn-stop.btn-sm { padding: 4px 9px; font-size: var(--tx-xs); }
 
-/* â”€â”€ Phase badges P1â€“P5 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Phase badges P1–P7 ────────────────────────────────────────────────────── */
 .phase-badge.phase-p1 {
   background: var(--blue-glow);
   color: var(--blue-bright);
@@ -1215,12 +1300,17 @@ body::before {
   border-color: rgba(240, 90, 41, 0.3);
 }
 .phase-badge.phase-p6 {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+.phase-badge.phase-p7 {
   background: rgba(139, 92, 246, 0.18);
   color: #a78bfa;
   border-color: rgba(139, 92, 246, 0.3);
 }
 
-/* â”€â”€ Tune status section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Tune status section ───────────────────────────────────────────────────── */
 .tune-status-section {
   display: flex;
   flex-direction: column;
@@ -1247,14 +1337,14 @@ body::before {
 }
 
 .tune-progress-label {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
 .tune-progress-frac {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   font-family: var(--font-mono);
   color: var(--text-primary);
 }
@@ -1277,64 +1367,64 @@ body::before {
 .tune-progress-fill.hits-done   { background: var(--success); }
 
 .tune-best-score {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   font-family: var(--font-mono);
 }
 
 .tune-done-banner {
-  padding: 5px 8px;
+  padding: 6px 9px;
   background: rgba(34, 197, 94, 0.08);
   border: 1px solid rgba(34, 197, 94, 0.25);
   border-radius: var(--chamfer-sm);
   color: var(--success);
-  font-size: 11px;
+  font-size: var(--tx-xs);
   font-family: var(--font-mono);
 }
 
 .tune-failed-banner {
-  padding: 5px 8px;
+  padding: 6px 9px;
   background: rgba(239, 68, 68, 0.08);
   border: 1px solid rgba(239, 68, 68, 0.3);
   border-radius: var(--chamfer-sm);
   color: #f87171;
-  font-size: 11px;
+  font-size: var(--tx-xs);
   font-family: var(--font-mono);
 }
 
-/* â”€â”€ Auto-Tune idle controls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Auto-Tune idle controls ───────────────────────────────────────────────── */
 .at-idle-controls {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
 }
 
 .at-config-row {
   display: grid;
   grid-template-columns: auto auto 1fr;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
 }
 
 .at-config-label {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   white-space: nowrap;
 }
 
 .at-config-input {
-  width: 60px;
-  padding: 3px 5px;
+  width: 64px;
+  padding: 4px 6px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-normal);
   border-radius: var(--chamfer-sm);
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--tx-sm);
   text-align: right;
 }
 
-.at-config-input.at-config-input-sm { width: 40px; }
+.at-config-input.at-config-input-sm { width: 44px; }
 
 .at-config-input:focus {
   outline: none;
@@ -1342,7 +1432,7 @@ body::before {
 }
 
 .at-config-unit {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   font-family: var(--font-mono);
 }
@@ -1351,7 +1441,7 @@ body::before {
   background: none;
   border: none;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--tx-xs);
   font-family: var(--font-mono);
   cursor: pointer;
   padding: 2px 0;
@@ -1364,8 +1454,8 @@ body::before {
 .at-advanced-grid {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 6px 8px;
+  gap: 4px;
+  padding: 7px 9px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
   border-radius: var(--chamfer-sm);
@@ -1373,13 +1463,13 @@ body::before {
 
 .at-adv-row {
   display: grid;
-  grid-template-columns: 1fr 60px auto;
+  grid-template-columns: 1fr 64px auto;
   align-items: center;
   gap: 6px;
 }
 
 .at-adv-row label {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -1388,13 +1478,13 @@ body::before {
 
 .at-adv-row input[type="number"] {
   width: 100%;
-  padding: 2px 4px;
+  padding: 3px 5px;
   background: var(--bg-panel);
   border: 1px solid var(--border-normal);
   border-radius: var(--chamfer-sm);
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--tx-sm);
   text-align: right;
 }
 
@@ -1404,7 +1494,7 @@ body::before {
 }
 
 .at-adv-unit {
-  font-size: 10px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   font-family: var(--font-mono);
   min-width: 30px;
@@ -1412,13 +1502,13 @@ body::before {
 
 .btn-autotune {
   width: 100%;
-  padding: 9px 12px;
+  padding: 10px 12px;
   background: rgba(240, 180, 41, 0.10);
   border: 1px solid var(--gold-dim);
   border-radius: var(--chamfer-sm);
   color: var(--gold-bright);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--tx-sm);
   font-weight: 700;
   letter-spacing: 0.04em;
   cursor: pointer;
@@ -1436,7 +1526,7 @@ body::before {
   cursor: not-allowed;
 }
 
-/* â”€â”€ Auto-Tune running controls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Auto-Tune running controls ────────────────────────────────────────────── */
 .at-running-controls {
   display: flex;
   flex-direction: column;
@@ -1448,7 +1538,7 @@ body::before {
 }
 
 .at-running-label {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--gold-bright);
   font-family: var(--font-mono);
 }
@@ -1460,12 +1550,12 @@ body::before {
 
 .btn-accept {
   flex: 1;
-  padding: 5px 8px;
+  padding: 6px 8px;
   background: rgba(34, 197, 94, 0.10);
   border: 1px solid rgba(34, 197, 94, 0.3);
   border-radius: var(--chamfer-sm);
   color: var(--success);
-  font-size: 11px;
+  font-size: var(--tx-xs);
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s;
@@ -1473,7 +1563,7 @@ body::before {
 
 .btn-accept:hover { background: rgba(34, 197, 94, 0.18); }
 
-/* â”€â”€ Manual controls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Manual controls ───────────────────────────────────────────────────────── */
 .manual-controls {
   display: flex;
   flex-direction: column;
@@ -1486,15 +1576,15 @@ body::before {
 }
 
 .btn.btn-sm {
-  padding: 5px 8px;
-  font-size: 10px;
+  padding: 6px 9px;
+  font-size: var(--tx-xs);
 }
 
 .manual-run-active {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   font-family: var(--font-mono);
 }
@@ -1506,51 +1596,98 @@ body::before {
 }
 
 .manual-run-input {
-  width: 52px;
-  padding: 3px 5px;
+  width: 56px;
+  padding: 4px 6px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-normal);
   border-radius: var(--chamfer-sm);
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--tx-xs);
   text-align: center;
 }
 
 .manual-run-input:focus { outline: none; border-color: var(--blue-bright); }
 
 .manual-run-unit {
-  font-size: 10px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   flex: 1;
 }
 
-/* â”€â”€ History phase dividers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── History phase dividers ─────────────────────────────────────────────────── */
 .history-phase-divider {
-  font-size: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: var(--tx-xs);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-secondary);
-  padding: 3px 0 1px;
+  padding: 4px 0 2px;
   border-top: 1px solid var(--border-normal);
   margin-top: 2px;
 }
 
-.history-phase-tag {
-  font-size: 9px;
+.history-phase-delta {
+  font-size: var(--tx-xs);
   font-family: var(--font-mono);
   color: var(--text-muted);
-  min-width: 14px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.history-phase-delta .delta-improve {
+  color: #4ade80;
+}
+
+.match-benchmark-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  background: rgba(139, 92, 246, 0.10);
+  border-top: 1px solid rgba(139, 92, 246, 0.30);
+  border-bottom: 1px solid rgba(139, 92, 246, 0.30);
+  margin-bottom: 4px;
+}
+
+.match-benchmark-label {
+  font-size: var(--tx-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #a78bfa;
+  flex: 1;
+}
+
+.match-benchmark-score {
+  font-family: var(--font-mono);
+  font-size: var(--tx-2xl);
+  font-weight: 700;
+  color: #a78bfa;
+  line-height: 1;
+}
+
+.match-benchmark-star {
+  font-size: var(--tx-num);
+  color: var(--gold);
+}
+
+.history-phase-tag {
+  font-size: var(--tx-xs);
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  min-width: 16px;
 }
 
 .history-phase-tag.fine-tune { color: var(--gold-dim); }
 
-/* â”€â”€ Recharts overrides â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-.recharts-cartesian-axis-tick-value { fill: var(--text-muted); font-size: 11px; }
-.recharts-legend-item-text { color: var(--text-secondary) !important; font-size: 11px; }
+/* ── Recharts overrides ────────────────────────────────────────────────────── */
+.recharts-cartesian-axis-tick-value { fill: var(--text-muted); font-size: var(--tx-xs); }
+.recharts-legend-item-text { color: var(--text-secondary) !important; font-size: var(--tx-xs); }
 .recharts-default-legend { padding: 0 0 0 16px !important; }
 
-/* â”€â”€ Launcher â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Launcher ──────────────────────────────────────────────────────────────── */
 .launcher {
   display: flex;
   flex-direction: column;
@@ -1567,7 +1704,7 @@ body::before {
 }
 
 .launcher-logo {
-  font-size: 48px;
+  font-size: var(--tx-logo);
   font-weight: 900;
   letter-spacing: -0.02em;
   line-height: 1;
@@ -1578,7 +1715,7 @@ body::before {
 
 .launcher-tagline {
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--tx-sm);
   letter-spacing: 0.10em;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -1592,7 +1729,7 @@ body::before {
 }
 
 .launcher-actions {
-  flex: 0 0 220px;
+  flex: 0 0 230px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1603,8 +1740,8 @@ body::before {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 20px;
-  font-size: 13px;
+  padding: 13px 20px;
+  font-size: var(--tx-base);
   font-weight: 600;
   letter-spacing: 0.04em;
   cursor: pointer;
@@ -1615,7 +1752,7 @@ body::before {
 }
 
 .launcher-btn-icon {
-  font-size: 16px;
+  font-size: var(--tx-lg);
   line-height: 1;
   width: 20px;
   text-align: center;
@@ -1659,7 +1796,7 @@ body::before {
 }
 
 .launcher-new-label {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   letter-spacing: 0.04em;
 }
@@ -1668,7 +1805,7 @@ body::before {
   background: var(--bg-elevated);
   border: 1px solid var(--border-normal);
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: var(--tx-base);
   padding: 8px 12px;
   border-radius: var(--chamfer-sm);
   outline: none;
@@ -1690,7 +1827,7 @@ body::before {
 }
 
 .launcher-recent-header {
-  font-size: 10px;
+  font-size: var(--tx-xs);
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -1701,7 +1838,7 @@ body::before {
 }
 
 .launcher-recent-empty {
-  font-size: 12px;
+  font-size: var(--tx-sm);
   color: var(--text-muted);
   padding-top: 4px;
 }
@@ -1717,7 +1854,6 @@ body::before {
   position: relative;
   width: 100%;
   text-align: left;
-  /* 40px right padding keeps text clear of the × button */
   padding: 12px 40px 12px 16px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
@@ -1731,14 +1867,14 @@ body::before {
 }
 
 .launcher-recent-name {
-  font-size: 14px;
+  font-size: var(--tx-base);
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 4px;
 }
 
 .launcher-recent-meta {
-  font-size: 12px;
+  font-size: var(--tx-sm);
   color: var(--text-secondary);
   font-family: var(--font-mono);
   display: flex;
@@ -1750,7 +1886,7 @@ body::before {
 .launcher-recent-dot { color: var(--text-muted); }
 
 .launcher-recent-path {
-  font-size: 10px;
+  font-size: var(--tx-xs);
   color: var(--text-muted);
   font-family: var(--font-mono);
   margin-top: 5px;
@@ -1767,7 +1903,7 @@ body::before {
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: var(--tx-num);
   cursor: pointer;
   padding: 2px 5px;
   border-radius: 3px;
@@ -1780,7 +1916,7 @@ body::before {
 
 /* ── Project layout v2 (activity rail + collapsible sidebar) ─────────────────── */
 .app-layout-project {
-  grid-template-columns: 40px 200px 260px 1fr !important;
+  grid-template-columns: var(--lay-rail) var(--lay-sidebar) var(--lay-tune) 1fr !important;
   grid-template-areas:
     "activity sidebar tune main"
     "bar      bar     bar  bar" !important;
@@ -1788,10 +1924,10 @@ body::before {
 }
 
 .app-layout-project.sidebar-closed {
-  grid-template-columns: 40px 0px 260px 1fr !important;
+  grid-template-columns: var(--lay-rail) 0px var(--lay-tune) 1fr !important;
 }
 
-/* Activity rail — narrow always-visible strip; future home of multiple view icons */
+/* Activity rail */
 .panel-activity {
   grid-area: activity;
   display: flex;
@@ -1805,20 +1941,22 @@ body::before {
 }
 
 .activity-btn {
-  width: 32px;
-  height: 32px;
+  width: calc(var(--lay-rail) - 10px);
+  height: calc(var(--lay-rail) - 10px);
   display: flex;
   align-items: center;
   justify-content: center;
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 15px;
+  font-size: 16px;
   cursor: pointer;
   border-radius: 3px;
   transition: color 0.15s, background 0.15s;
   line-height: 1;
 }
+
+.activity-spacer { flex: 1; }
 
 .activity-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
 
@@ -1861,7 +1999,6 @@ body::before {
   margin-right: 14px;
 }
 
-.tune-panel .history-list,
 .tune-panel .section-label-row {
   padding-left: 14px;
   padding-right: 14px;
@@ -1902,7 +2039,7 @@ body::before {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 14px;
+  padding: 7px 14px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-elevated);
   flex-shrink: 0;
@@ -1914,12 +2051,12 @@ body::before {
   gap: 6px;
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--tx-sm);
   color: var(--text-secondary);
   overflow: hidden;
 }
 
-.motor-strip-icon { font-size: 14px; flex-shrink: 0; line-height: 1; }
+.motor-strip-icon { font-size: var(--tx-num); flex-shrink: 0; line-height: 1; }
 .motor-strip-type { font-weight: 600; color: var(--text-primary); flex-shrink: 0; }
 .motor-strip-dot  { color: var(--text-muted); flex-shrink: 0; }
 
@@ -1930,10 +2067,10 @@ body::before {
   flex-shrink: 0;
 }
 
-.motor-strip-sp-input { width: 72px !important; }
+.motor-strip-sp-input { width: 76px !important; }
 
 .motor-strip-setpoint-unit {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   font-family: var(--font-mono);
   min-width: 24px;
@@ -1945,8 +2082,8 @@ body::before {
   background: var(--bg-elevated);
   border: 1px solid var(--border-normal);
   color: var(--text-secondary);
-  font-size: 11px;
-  padding: 3px 9px;
+  font-size: var(--tx-xs);
+  padding: 4px 10px;
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
   clip-path: polygon(var(--chamfer-sm) 0%, 100% 0%, 100% calc(100% - var(--chamfer-sm)), calc(100% - var(--chamfer-sm)) 100%, 0% 100%, 0% var(--chamfer-sm));
@@ -2002,7 +2139,7 @@ body::before {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 3px 0;
+  padding: 4px 0;
   border-bottom: 1px solid var(--border-subtle);
   gap: 8px;
 }
@@ -2013,14 +2150,14 @@ body::before {
 }
 
 .bottom-metric-label {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   flex-shrink: 0;
 }
 
 .bottom-metric-value {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--tx-sm);
   color: var(--text-primary);
 }
 
@@ -2032,18 +2169,18 @@ body::before {
 }
 
 .bottom-score-label {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
 }
 
 .bottom-score-value {
   font-family: var(--font-mono);
-  font-size: 15px;
+  font-size: var(--tx-lg);
   font-weight: 700;
 }
 
 .bottom-metrics-empty {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-muted);
   padding: 4px 0;
 }
@@ -2066,7 +2203,7 @@ body::before {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px 8px 12px;
+  padding: 9px 10px 9px 12px;
   border-bottom: 1px solid var(--border-subtle);
   gap: 6px;
   flex-shrink: 0;
@@ -2090,7 +2227,7 @@ body::before {
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 15px;
+  font-size: 16px;
   cursor: pointer;
   padding: 2px 5px;
   border-radius: 3px;
@@ -2104,7 +2241,7 @@ body::before {
   background: none;
   border: none;
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--tx-sm);
   font-weight: 700;
   cursor: default;
   text-align: left;
@@ -2121,7 +2258,7 @@ body::before {
   background: var(--bg-elevated);
   border: 1px solid var(--blue-bright);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--tx-sm);
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 3px;
@@ -2130,13 +2267,13 @@ body::before {
 }
 
 .project-motor-count {
-  font-size: 10px;
+  font-size: var(--tx-xs);
   color: var(--text-muted);
   font-family: var(--font-mono);
 }
 
 .project-sidebar-section-label {
-  font-size: 10px;
+  font-size: var(--tx-xs);
   font-weight: 600;
   letter-spacing: 0.10em;
   color: var(--text-muted);
@@ -2153,7 +2290,7 @@ body::before {
 }
 
 .project-empty {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-muted);
   padding: 8px 6px;
   line-height: 1.5;
@@ -2163,7 +2300,7 @@ body::before {
   display: flex;
   align-items: flex-start;
   gap: 7px;
-  padding: 7px 8px;
+  padding: 8px 8px;
   border-radius: var(--chamfer-sm);
   cursor: pointer;
   transition: background 0.12s;
@@ -2176,7 +2313,7 @@ body::before {
 }
 
 .project-motor-icon {
-  font-size: 12px;
+  font-size: var(--tx-sm);
   flex-shrink: 0;
   margin-top: 2px;
   line-height: 1;
@@ -2191,7 +2328,7 @@ body::before {
 }
 
 .project-motor-name {
-  font-size: 12px;
+  font-size: var(--tx-sm);
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
@@ -2200,7 +2337,7 @@ body::before {
 }
 
 .project-motor-meta {
-  font-size: 10px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   font-family: var(--font-mono);
   white-space: nowrap;
@@ -2209,7 +2346,7 @@ body::before {
 }
 
 .project-motor-tuned {
-  font-size: 10px;
+  font-size: var(--tx-xs);
   color: var(--success);
   font-family: var(--font-mono);
 }
@@ -2219,7 +2356,7 @@ body::before {
   background: var(--bg-elevated);
   border: 1px solid var(--blue-bright);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--tx-sm);
   padding: 2px 5px;
   border-radius: 3px;
   outline: none;
@@ -2233,12 +2370,12 @@ body::before {
 
 .project-add-btn {
   width: 100%;
-  padding: 7px 0;
+  padding: 8px 0;
   background: none;
   border: 1px dashed var(--border-normal);
   border-radius: var(--chamfer-sm);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--tx-xs);
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
 }
@@ -2252,7 +2389,7 @@ body::before {
   border: 1px solid var(--border-accent);
   border-radius: var(--chamfer-sm);
   z-index: 500;
-  min-width: 120px;
+  min-width: 130px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.4);
   overflow: hidden;
   padding: 3px;
@@ -2260,9 +2397,9 @@ body::before {
 .project-context-menu button {
   display: block;
   width: 100%;
-  padding: 6px 12px;
+  padding: 7px 13px;
   text-align: left;
-  font-size: 11px;
+  font-size: var(--tx-xs);
   background: none;
   border: none;
   color: var(--text-secondary);
@@ -2286,7 +2423,7 @@ body::before {
 }
 
 .motor-config-modal {
-  width: 780px;
+  width: 800px;
   max-height: 90vh;
   background: var(--bg-panel);
   border: 1px solid var(--border-accent);
@@ -2308,7 +2445,7 @@ body::before {
 
 .motor-config-title {
   flex: 1;
-  font-size: 14px;
+  font-size: var(--tx-num);
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: 0.03em;
@@ -2328,7 +2465,7 @@ body::before {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 10px;
+  font-size: var(--tx-xs);
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -2344,10 +2481,11 @@ body::before {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--tx-sm);
   color: var(--text-primary);
 }
 
+.cfg-field-hint { color: var(--text-muted); font-size: var(--tx-xs); }
 .cfg-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .cfg-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 
@@ -2356,8 +2494,8 @@ body::before {
   border: 1px solid var(--border-normal);
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 6px 10px;
+  font-size: var(--tx-sm);
+  padding: 7px 10px;
   outline: none;
   border-radius: var(--chamfer-sm);
   transition: border-color 0.15s;
@@ -2370,13 +2508,13 @@ body::before {
   background: var(--bg-elevated);
   border: 1px solid var(--border-normal);
   color: var(--text-primary);
-  font-size: 12px;
-  padding: 6px 10px;
+  font-size: var(--tx-sm);
+  padding: 7px 10px;
   outline: none;
   border-radius: var(--chamfer-sm);
   resize: vertical;
   width: 100%;
-  min-height: 52px;
+  min-height: 54px;
   transition: border-color 0.15s;
 }
 .cfg-textarea:focus { border-color: var(--blue-bright); }
@@ -2385,8 +2523,8 @@ body::before {
   background: var(--bg-elevated);
   border: 1px solid var(--border-normal);
   color: var(--text-primary);
-  font-size: 12px;
-  padding: 6px 10px;
+  font-size: var(--tx-sm);
+  padding: 7px 10px;
   outline: none;
   border-radius: var(--chamfer-sm);
   width: 100%;
@@ -2403,8 +2541,8 @@ body::before {
 .cfg-tab-group { display: flex; }
 .cfg-tab-btn {
   flex: 1;
-  padding: 6px 4px;
-  font-size: 11px;
+  padding: 7px 4px;
+  font-size: var(--tx-xs);
   font-weight: 600;
   background: var(--bg-elevated);
   border: 1px solid var(--border-normal);
@@ -2442,23 +2580,23 @@ body::before {
 }
 .cfg-toggle input:checked + .cfg-toggle-track { background: var(--blue-dim); border-color: var(--blue-bright); }
 .cfg-toggle input:checked + .cfg-toggle-track::after { transform: translateX(16px); background: var(--blue-bright); }
-.cfg-toggle-label { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-secondary); user-select: none; }
+.cfg-toggle-label { display: flex; align-items: center; gap: 5px; font-size: var(--tx-sm); color: var(--text-secondary); user-select: none; }
 
 .cfg-gear-ratio-row { display: flex; align-items: center; gap: 6px; }
 .cfg-gear-ratio-row .cfg-input { width: 0; flex: 1; }
-.cfg-gear-colon { font-size: 15px; font-weight: 700; color: var(--text-muted); flex-shrink: 0; }
-.cfg-gear-computed { font-size: 10px; color: var(--text-muted); white-space: nowrap; flex-shrink: 0; }
+.cfg-gear-colon { font-size: 16px; font-weight: 700; color: var(--text-muted); flex-shrink: 0; }
+.cfg-gear-computed { font-size: var(--tx-xs); color: var(--text-muted); white-space: nowrap; flex-shrink: 0; }
 
 .cfg-tooltip {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px; height: 14px;
+  width: 15px; height: 15px;
   border-radius: 50%;
   border: 1px solid var(--border-accent);
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--tx-xs);
   font-weight: 700;
   cursor: help;
   flex-shrink: 0;
@@ -2475,7 +2613,7 @@ body::before {
   border: 1px solid var(--border-accent);
   border-radius: var(--chamfer-sm);
   padding: 8px 10px;
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   line-height: 1.5;
   z-index: 200;
@@ -2490,8 +2628,8 @@ body::before {
 
 .cfg-suggest-btn {
   margin-left: auto;
-  padding: 1px 7px;
-  font-size: 10px;
+  padding: 2px 8px;
+  font-size: var(--tx-xs);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -2505,17 +2643,17 @@ body::before {
 }
 .cfg-suggest-btn:hover { color: var(--blue-bright); border-color: var(--blue-bright); }
 
-.cfg-btn { padding: 7px 18px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; cursor: pointer; border-radius: var(--chamfer-sm); border: 1px solid transparent; transition: all 0.15s; }
+.cfg-btn { padding: 8px 18px; font-size: var(--tx-sm); font-weight: 600; letter-spacing: 0.04em; cursor: pointer; border-radius: var(--chamfer-sm); border: 1px solid transparent; transition: all 0.15s; }
 .cfg-btn-save { background: var(--blue-dim); border-color: var(--blue-bright); color: var(--blue-bright); }
 .cfg-btn-save:not(:disabled):hover { background: var(--blue); box-shadow: 0 0 12px var(--blue-glow-lg); }
 .cfg-btn-save:disabled { opacity: 0.4; cursor: not-allowed; }
 .cfg-btn-cancel { background: none; border-color: var(--border-normal); color: var(--text-secondary); }
 .cfg-btn-cancel:hover { border-color: var(--border-accent); color: var(--text-primary); }
 
-.cfg-note { font-size: 11px; color: var(--text-muted); font-style: italic; }
+.cfg-note { font-size: var(--tx-xs); color: var(--text-muted); font-style: italic; }
 
 .cfg-mode-desc {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   color: var(--text-secondary);
   line-height: 1.55;
   background: var(--bg-elevated);
@@ -2536,7 +2674,7 @@ body::before {
 }
 
 .cfg-limit-group-label {
-  font-size: 11px;
+  font-size: var(--tx-xs);
   font-weight: 600;
   color: var(--text-secondary);
   letter-spacing: 0.04em;
@@ -2556,11 +2694,11 @@ body::before {
 }
 .cfg-setpoint-name { flex: 1.4; min-width: 0; font-family: var(--font-mono); }
 .cfg-setpoint-value { flex: 0.8; min-width: 0; }
-.cfg-setpoint-eq { font-size: 13px; color: var(--text-muted); flex-shrink: 0; }
-.cfg-setpoint-unit { font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono); flex-shrink: 0; min-width: 32px; }
+.cfg-setpoint-eq { font-size: var(--tx-base); color: var(--text-muted); flex-shrink: 0; }
+.cfg-setpoint-unit { font-size: var(--tx-xs); color: var(--text-secondary); font-family: var(--font-mono); flex-shrink: 0; min-width: 32px; }
 .cfg-setpoint-remove {
   background: none; border: none; color: var(--text-muted);
-  font-size: 14px; cursor: pointer; padding: 2px 5px;
+  font-size: var(--tx-num); cursor: pointer; padding: 2px 5px;
   border-radius: 3px; flex-shrink: 0; transition: color 0.12s;
 }
 .cfg-setpoint-remove:hover { color: var(--error); }
@@ -2568,10 +2706,89 @@ body::before {
   background: var(--blue-dim);
   border: 1px solid var(--blue-bright);
   color: var(--blue-bright);
-  font-size: 16px; font-weight: 700;
+  font-size: var(--tx-lg); font-weight: 700;
   cursor: pointer; padding: 1px 10px 3px;
   border-radius: var(--chamfer-sm); flex-shrink: 0;
   transition: background 0.12s; line-height: 1;
 }
 .cfg-setpoint-add-btn:not(:disabled):hover { background: var(--blue); }
 .cfg-setpoint-add-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ── Settings panel ──────────────────────────────────────────────────────────── */
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.settings-size-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 10px 10px;
+}
+
+.settings-size-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  border-radius: var(--chamfer-sm);
+  transition: all 0.12s;
+}
+
+.settings-size-btn:hover {
+  border-color: var(--border-accent);
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.settings-size-btn.active {
+  border-color: var(--blue-bright);
+  background: var(--blue-glow);
+  color: var(--blue-bright);
+}
+
+.settings-size-radio {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--border-accent);
+  flex-shrink: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-size-btn.active .settings-size-radio {
+  border-color: var(--blue-bright);
+}
+
+.settings-size-btn.active .settings-size-radio::after {
+  content: '';
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--blue-bright);
+}
+
+.settings-size-name {
+  flex: 1;
+  font-size: var(--tx-xs);
+}
+
+.settings-size-preview {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  line-height: 1;
+  min-width: 24px;
+  text-align: right;
+}

@@ -57,7 +57,7 @@ function phaseTag(p: number): string {
 
 function phaseBadgeClass(p: number): string {
   if (p <= 1) return 'phase-badge phase-p1'
-  return `phase-badge phase-p${Math.min(p, 6)}`
+  return `phase-badge phase-p${Math.min(p, 7)}`
 }
 
 function buildLog(history: OptimizerEntry[], mechanism: MechanismConfig, nominalSetpoint: number): string {
@@ -129,6 +129,16 @@ function buildLog(history: OptimizerEntry[], mechanism: MechanismConfig, nominal
   return [header, ...entries.map(e => e + '\n'), best].join('\n')
 }
 
+function buildSimpleLog(history: OptimizerEntry[]): string {
+  if (history.length === 0) return ''
+  const bestEntry = history.reduce((b, e) => e.metrics.score < b.metrics.score ? e : b)
+  const rows = history.map(e => {
+    const isBest = e.testIndex === bestEntry.testIndex
+    return `#${String(e.testIndex + 1).padStart(3)}  P${e.tunePhase}  ${e.metrics.score.toFixed(2)}${isBest ? '  ★' : ''}`
+  })
+  return [`Run   Ph  Score`, ...rows].join('\n')
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function TunePanel({
@@ -140,8 +150,9 @@ export default function TunePanel({
   onStartAutoTune, onStopAutoTune, onAcceptTune,
   onAutoTuneConfigChange, onRestoreGains,
 }: Props): JSX.Element {
-  const [copyState, setCopyState]       = useState<'idle' | 'copied'>('idle')
-  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [copyState, setCopyState]             = useState<'idle' | 'copied'>('idle')
+  const [copySimpleState, setCopySimpleState] = useState<'idle' | 'copied'>('idle')
+  const [advancedOpen, setAdvancedOpen]       = useState(false)
 
   function setCfgField(field: keyof AutoTuneConfig, val: number): void {
     onAutoTuneConfigChange({ ...autoTuneConfig, [field]: val })
@@ -168,6 +179,14 @@ export default function TunePanel({
     }).catch(() => {})
   }
 
+  function copySimpleLog(): void {
+    if (history.length === 0) return
+    navigator.clipboard.writeText(buildSimpleLog(history)).then(() => {
+      setCopySimpleState('copied')
+      setTimeout(() => setCopySimpleState('idle'), 2000)
+    }).catch(() => {})
+  }
+
   const bestEntry = history.length > 0
     ? history.reduce((b, e) => e.metrics.score < b.metrics.score ? e : b)
     : null
@@ -178,8 +197,8 @@ export default function TunePanel({
 
   const phaseMax = currentPhase === 1
     ? autoTuneConfig.p1MaxExperiments
-    : currentPhase >= 6
-      ? autoTuneConfig.p6MaxExperiments
+    : (currentPhase === 6 || currentPhase === 7)
+      ? 1
       : autoTuneConfig.phaseMaxExperiments
   const phasePct = currentPhase > 0 ? Math.min(100, (phaseExpCount / phaseMax) * 100) : 0
   const hitsPct  = Math.min(100, (consecutiveHits / autoTuneConfig.consecutiveHits) * 100)
@@ -197,25 +216,36 @@ export default function TunePanel({
 
       {/* ── Phase status ─────────────────────────────────────────────────── */}
       <div className="tune-status-section">
-        <div className="tune-status-header">
-          <div className="tune-phase-badges">
-            {currentPhase > 0 && (
+        {currentPhase > 0 && (
+          <div className="tune-status-header">
+            <div className="tune-phase-badges">
               <span className={phaseBadgeClass(currentPhase)}>
                 {phaseTag(currentPhase)}
               </span>
-            )}
-            <span className={`phase-badge ${isStructured ? 'phase-structured' : 'phase-ucb'}`}>
-              {phaseInfo.label}
-            </span>
+              {!(autoTuneDone || autoTuneFailed) && (
+                <span className={`phase-badge ${isStructured ? 'phase-structured' : 'phase-ucb'}`}>
+                  {phaseInfo.label}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-        <div className="phase-description">{phaseInfo.description}</div>
+        )}
 
-        {currentPhase > 0 && (
+        {!(autoTuneDone || autoTuneFailed) && currentPhase > 0 && (
+          <div className="phase-description">{phaseInfo.description}</div>
+        )}
+
+        {currentPhase > 0 && !(autoTuneDone || autoTuneFailed) && (
           <>
             <div className="tune-progress-row">
               <span className="tune-progress-label">
-                {currentPhase === 1 ? 'Exploration' : `Phase ${currentPhase} refinement`}
+                {currentPhase === 1
+                  ? 'Exploration'
+                  : currentPhase === 6
+                    ? 'Stress diagnostics'
+                    : currentPhase === 7
+                      ? 'Match benchmark'
+                      : `Phase ${currentPhase} refinement`}
               </span>
               <span className="tune-progress-frac">{phaseExpCount} / {phaseMax}</span>
             </div>
@@ -240,19 +270,19 @@ export default function TunePanel({
                 style={{ width: `${hitsPct}%` }}
               />
             </div>
-
-            {bestEntry && (
-              <div className="tune-best-score">
-                Best:&nbsp;
-                <span style={{ color: scoreColor(bestEntry.metrics.score) }}>
-                  {bestEntry.metrics.score.toFixed(2)}
-                </span>
-                {bestEntry.metrics.score < autoTuneConfig.targetScore && (
-                  <span style={{ color: 'var(--success)', marginLeft: 4 }}>✓ target</span>
-                )}
-              </div>
-            )}
           </>
+        )}
+
+        {bestEntry && (
+          <div className="tune-best-score">
+            Best:&nbsp;
+            <span style={{ color: scoreColor(bestEntry.metrics.score) }}>
+              {bestEntry.metrics.score.toFixed(2)}
+            </span>
+            {bestEntry.metrics.score < autoTuneConfig.targetScore && (
+              <span style={{ color: 'var(--success)', marginLeft: 4 }}>✓ target</span>
+            )}
+          </div>
         )}
 
         {autoTuneDone && (
@@ -281,9 +311,13 @@ export default function TunePanel({
           <div className="at-running-label">
             {currentPhase === 1
               ? `Phase 1 — exploring…`
-              : phaseExtCount > 0
-                ? `Phase ${currentPhase} — extending (${phaseExtCount}/${autoTuneConfig.phaseExtensionMax} extra)…`
-                : `Phase ${currentPhase} — refining (±${((autoTuneConfig.phaseRadii[currentPhase - 2] ?? 0.05) * 100).toFixed(0)}%)…`}
+              : currentPhase === 6
+                ? `Phase 6 — stress diagnostics…`
+                : currentPhase === 7
+                  ? `Phase 7 — match benchmark…`
+                  : phaseExtCount > 0
+                    ? `Phase ${currentPhase} — extending (${phaseExtCount}/${autoTuneConfig.phaseExtensionMax} extra)…`
+                    : `Phase ${currentPhase} — refining (±${((autoTuneConfig.phaseRadii[currentPhase - 2] ?? 0.05) * 100).toFixed(0)}%)…`}
           </div>
           <div className="at-running-buttons">
             <button className="btn btn-accept" onClick={onAcceptTune}>✓ Accept</button>
@@ -309,11 +343,33 @@ export default function TunePanel({
               className="at-config-input at-config-input-sm"
               value={autoTuneConfig.numPhases}
               min={2}
-              max={6}
+              max={7}
               step={1}
               onChange={v => setCfgField('numPhases', Math.round(v))}
             />
-            <span className="at-config-unit">total (P1 + {autoTuneConfig.numPhases - 1} fine-tune)</span>
+            <span className="at-config-unit">
+              {autoTuneConfig.numPhases <= 5
+                ? `total (P1 + ${autoTuneConfig.numPhases - 1} fine-tune)`
+                : autoTuneConfig.numPhases === 6
+                  ? 'P1–5 + stress diagnostics'
+                  : 'P1–5 + stress + benchmark'}
+            </span>
+          </div>
+          <div className="at-config-row">
+            <label className="at-config-label">Start phase</label>
+            <NumericInput
+              className="at-config-input at-config-input-sm"
+              value={autoTuneConfig.startPhase}
+              min={1}
+              max={Math.max(1, autoTuneConfig.numPhases - 1)}
+              step={1}
+              onChange={v => setCfgField('startPhase', Math.round(v))}
+            />
+            <span className="at-config-unit">
+              {autoTuneConfig.startPhase <= 1
+                ? 'full run from exploration'
+                : `skip P1–${autoTuneConfig.startPhase - 1}, use current gains`}
+            </span>
           </div>
 
           <button className="at-advanced-toggle" onClick={() => setAdvancedOpen(o => !o)}>
@@ -338,12 +394,13 @@ export default function TunePanel({
               </div>
               {autoTuneConfig.numPhases >= 6 && (
                 <div className="at-adv-row">
-                  <label>Phase 6 max experiments</label>
-                  <NumericInput value={autoTuneConfig.p6MaxExperiments} min={2} max={30} step={1}
-                    onChange={v => setCfgField('p6MaxExperiments', Math.round(v))} />
+                  <label>Phase 6 retries</label>
+                  <NumericInput value={autoTuneConfig.p6MaxRetries} min={0} max={5} step={1}
+                    onChange={v => setCfgField('p6MaxRetries', Math.round(v))} />
+                  <span className="at-adv-unit">max loops back</span>
                 </div>
               )}
-              {[2, 3, 4, 5, 6].slice(0, autoTuneConfig.numPhases - 1).map((pn, i) => (
+              {[2, 3, 4, 5].slice(0, Math.min(autoTuneConfig.numPhases - 1, 4)).map((pn, i) => (
                 <div key={pn} className="at-adv-row">
                   <label>Phase {pn} radius</label>
                   <NumericInput
@@ -378,7 +435,7 @@ export default function TunePanel({
                   onChange={v => setCfgField('phaseExtensionMax', Math.round(v))} />
                 <span className="at-adv-unit">extra</span>
               </div>
-              {[1, 2, 3, 4, 5].slice(0, Math.min(autoTuneConfig.numPhases - 1, 5)).map((pn, i) => (
+              {[1, 2, 3, 4, 5].slice(0, Math.min(autoTuneConfig.numPhases - 1, 4)).map((pn, i) => (
                 <div key={`thr${pn}`} className="at-adv-row">
                   <label>P{pn}→P{pn + 1} threshold</label>
                   <NumericInput
@@ -412,13 +469,22 @@ export default function TunePanel({
           <div className="section-divider" />
           <div className="section-label-row">
             <span className="section-label" style={{ marginBottom: 0 }}>History</span>
-            <button
-              className={`btn-log-copy ${copyState === 'copied' ? 'copied' : ''}`}
-              onClick={copyLog}
-              title="Copy full test log to clipboard"
-            >
-              {copyState === 'copied' ? '✓ Copied' : '⎘ Copy Log'}
-            </button>
+            <div className="log-copy-buttons">
+              <button
+                className={`btn-log-copy ${copySimpleState === 'copied' ? 'copied' : ''}`}
+                onClick={copySimpleLog}
+                title="Copy run # and score only"
+              >
+                {copySimpleState === 'copied' ? '✓ Copied' : '⎘ Simple'}
+              </button>
+              <button
+                className={`btn-log-copy ${copyState === 'copied' ? 'copied' : ''}`}
+                onClick={copyLog}
+                title="Copy full test log to clipboard"
+              >
+                {copyState === 'copied' ? '✓ Copied' : '⎘ Full Log'}
+              </button>
+            </div>
           </div>
           <HistoryList history={history} bestEntry={bestEntry} onRestoreGains={onRestoreGains} />
         </>
@@ -438,20 +504,53 @@ function HistoryList({
   bestEntry: OptimizerEntry | null
   onRestoreGains: (g: Gains) => void
 }): JSX.Element {
-  const recent = [...history].reverse().slice(0, 10)
-  let lastPhase = -1
+  // Compute per-phase anchor (first run = previous phase best re-run) and best score.
+  // History is ascending by testIndex so the first entry per phase is the anchor.
+  const phaseStats = new Map<number, { anchorScore: number; bestScore: number }>()
+  for (const entry of history) {
+    const ph  = entry.tunePhase
+    const cur = phaseStats.get(ph)
+    if (!cur) {
+      phaseStats.set(ph, { anchorScore: entry.metrics.score, bestScore: entry.metrics.score })
+    } else {
+      phaseStats.set(ph, { anchorScore: cur.anchorScore, bestScore: Math.min(cur.bestScore, entry.metrics.score) })
+    }
+  }
+
+  const p7Entry  = history.find(e => e.tunePhase === 7)
+  const reversed = [...history].reverse()
+  let lastPhase  = -1
   const rows: JSX.Element[] = []
 
-  for (let i = 0; i < recent.length; i++) {
-    const entry  = recent[i]
+  for (let i = 0; i < reversed.length; i++) {
+    const entry  = reversed[i]
     const isBest = bestEntry && entry.metrics.score === bestEntry.metrics.score
     const absIdx = history.length - i
 
     if (entry.tunePhase !== lastPhase) {
       lastPhase = entry.tunePhase
+      const stats      = phaseStats.get(entry.tunePhase)
+      const improved   = stats && stats.bestScore < stats.anchorScore
+      const deltaPct   = improved
+        ? (((stats!.bestScore - stats!.anchorScore) / stats!.anchorScore) * 100).toFixed(0)
+        : null
+      const phaseLabel = entry.tunePhase === 1
+        ? 'Phase 1 — Exploration'
+        : entry.tunePhase === 6
+          ? 'Phase 6 — Stress Diagnostics'
+          : entry.tunePhase === 7
+            ? 'Phase 7 — Match Benchmark'
+            : `Phase ${entry.tunePhase} — Fine-tune`
+
       rows.push(
         <div key={`divider-${entry.tunePhase}-${i}`} className="history-phase-divider">
-          {entry.tunePhase === 1 ? 'Phase 1 — Exploration' : `Phase ${entry.tunePhase} — Fine-tune`}
+          <span>{phaseLabel}</span>
+          {improved && deltaPct && entry.tunePhase <= 5 && (
+            <span className="history-phase-delta">
+              {stats!.anchorScore.toFixed(2)} → {stats!.bestScore.toFixed(2)}
+              <span className="delta-improve">&thinsp;{deltaPct}%</span>
+            </span>
+          )}
         </div>
       )
     }
@@ -484,5 +583,16 @@ function HistoryList({
     )
   }
 
-  return <div className="history-list">{rows}</div>
+  return (
+    <div className="history-outer">
+      {p7Entry && (
+        <div className="match-benchmark-banner">
+          <span className="match-benchmark-label">Match Benchmark</span>
+          <span className="match-benchmark-score">{p7Entry.metrics.score.toFixed(2)}</span>
+          <span className="match-benchmark-star">★</span>
+        </div>
+      )}
+      <div className="history-list">{rows}</div>
+    </div>
+  )
 }
