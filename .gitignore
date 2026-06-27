@@ -3,3 +3,18 @@ out/
 dist/
 *.tsbuildinfo
 .DS_Store
+Thumbs.db
+
+# electron-vite cache
+.vite/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+
+# GainLab project files (user-generated data, not source)
+*.gainlab.json
